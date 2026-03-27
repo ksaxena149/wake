@@ -1,0 +1,34 @@
+---
+description: Adaptive learning rule — corrections and preferences collected from user feedback during development
+alwaysApply: true
+---
+
+# Feedback & Corrections
+
+This file is a living document. It grows over time as the human corrects the AI during development sessions.
+
+## How This Works
+
+When the human says any of the following (or similar):
+- "Remember this for next time"
+- "Don't do that again"
+- "Always do it this way"
+- "I prefer X over Y"
+- "That was wrong because..."
+- "From now on..."
+
+**The AI must**:
+1. Acknowledge the correction.
+2. Append a new entry to the "Learned Corrections" section below, with the date and a concise rule.
+3. Follow the correction in all future work.
+
+When starting any new task, scan the entries below first.
+
+---
+
+## Learned Corrections
+
+<!-- New entries go here. Format:
+### YYYY-MM-DD — Short title
+Description of what was corrected and what to do instead.
+-->

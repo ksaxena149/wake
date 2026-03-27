@@ -1,0 +1,41 @@
+---
+description: WAKE project identity, architecture, and core AI behavior rules
+alwaysApply: true
+---
+
+# WAKE — Core Project Rules
+
+## Project Identity
+
+WAKE (Wireless Asynchronous Knowledge Exchange) is an Android DTN (Delay-Tolerant Network) mesh system that delivers offline educational content from a kiwix-serve server to Android phones via store-and-forward relay.
+
+## Architecture
+
+- **Server**: Python FastAPI daemon wrapping kiwix-serve. Runs on laptop during development, Raspberry Pi in production.
+- **Android app**: Kotlin + Jetpack Compose. Uses Google Nearby Connections API for phone-to-phone transport.
+- **Bundle protocol**: JSON + base64 payloads. Request and response bundles carry queries and content chunks through the mesh.
+- **Routing**: Epidemic (flood-fill) first, PRoPHET probabilistic routing later.
+
+## Monorepo Layout
+
+```
+server/          → Python FastAPI server code
+android/         → Kotlin Android app
+docs/decisions/  → Architecture Decision Records (ADRs)
+.github/         → Issue templates, CI workflows
+```
+
+## Roles
+
+- **Human**: project manager, architect, reviewer, committer. Makes all architecture decisions.
+- **AI**: implementer. Writes code, writes tests, follows conventions. Never makes architecture decisions unilaterally.
+
+## AI Behavior
+
+- Before implementing, confirm you understand the task scope. Ask if unclear.
+- Never introduce a new library or dependency without asking the human first.
+- Never change project structure (new top-level directories, new config files) without asking.
+- If a task requires an architecture decision, say so and suggest writing an ADR instead of just choosing.
+- Keep code simple. Prefer readable over clever. This is a solo developer's project.
+- When generating code, include only the minimum necessary comments — explain *why*, never *what*.
+- Always check `@.cursor/rules/feedback.mdc` for project-specific corrections before starting work.

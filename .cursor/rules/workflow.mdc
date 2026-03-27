@@ -1,0 +1,55 @@
+---
+description: Git workflow, commit conventions, branching, and human-AI collaboration protocol
+alwaysApply: true
+---
+
+# Workflow & Collaboration Rules
+
+## Branching
+
+- `main` — stable. One merge per completed phase. Never commit directly.
+- `dev` — integration. All feature branches merge here via PR.
+- `feature/phase-X-description` — one branch per issue.
+
+## Commit Convention
+
+Use Conventional Commits. Format:
+
+```
+<type>(<scope>): <short imperative description>
+```
+
+Types: `feat`, `fix`, `test`, `docs`, `refactor`, `chore`
+Scopes: `server`, `android`, `bundle`, `routing`, `security`, `ci`
+
+Examples:
+- `feat(server): add bundle chunker for responses over 100KB`
+- `fix(android): prevent Room migration crash on cold start`
+- `test(server): add signature verification round-trip tests`
+
+Rules:
+- One logical change per commit.
+- Never commit "misc", "WIP", or "various fixes".
+- Commit message body is optional but encouraged for non-obvious changes.
+
+## Issue Workflow
+
+Every coding task corresponds to a GitHub issue. When the human gives you an issue:
+
+1. Read the issue title and description carefully.
+2. Identify which files are affected before writing code.
+3. Implement the minimal change that satisfies the acceptance criteria.
+4. After implementation, suggest what to test manually and what to unit test.
+
+## AI Session Protocol
+
+- The human will tell you the current issue number and phase at the start of a session.
+- Stay focused on that one issue. Do not fix unrelated things you notice unless asked.
+- If you discover something broken unrelated to the current issue, mention it but do not fix it.
+- At the end of your work, summarize what you changed and what the human should review.
+
+## Testing
+
+- Server tests: `pytest server/tests/` — always suggest running after server changes.
+- Android tests: manual on-device testing for Nearby/BLE features (no emulator support).
+- When writing tests, follow existing test file patterns. Do not introduce a new test framework.

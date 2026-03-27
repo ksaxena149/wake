@@ -1,0 +1,44 @@
+---
+description: Kotlin and Android conventions for the WAKE Android app
+globs: android/**/*.kt
+alwaysApply: false
+---
+
+# Android App Rules
+
+## Stack
+
+- Kotlin, Jetpack Compose for UI, Room for local DB, OkHttp for HTTP
+- Google Nearby Connections API for peer-to-peer transport
+- Google Tink for cryptographic signature verification
+- Foreground Service for always-on relay behavior
+
+## Code Style
+
+- Use Kotlin idioms: `val` over `var`, data classes for models, `when` over `if-else` chains.
+- Coroutines for all async work. Use `Dispatchers.IO` for disk/network, `Dispatchers.Main` for UI.
+- Name ViewModels as `<Screen>ViewModel`. Name composables as `<Screen>Screen`.
+- Keep composable functions small. Extract reusable components into separate files.
+
+## Architecture
+
+- MVVM: ViewModel holds state, Composables render it, Repository handles data.
+- Room entities go in a `data/` package. ViewModels in `ui/`. Services in `service/`.
+- Do not put business logic in Composables. Logic belongs in ViewModel or Repository.
+
+## Nearby Connections
+
+- Service ID: `"com.wake.dtn"`
+- Use `Strategy.P2P_CLUSTER` for multi-peer mesh topology.
+- Connection callbacks go in a dedicated `NearbyConnectionManager` class, not scattered in Activities.
+- Always disconnect after bundle exchange completes. Do not hold connections open.
+
+## Permissions
+
+Required at runtime: `ACCESS_FINE_LOCATION`, `BLUETOOTH_SCAN`, `BLUETOOTH_ADVERTISE`, `BLUETOOTH_CONNECT`, `NEARBY_WIFI_DEVICES` (Android 13+), `POST_NOTIFICATIONS` (Android 13+).
+
+## Bundle Storage
+
+- Payload bytes stored as files in `context.filesDir`, metadata in Room.
+- File naming: `{query_id}_{chunk_index}.bundle`
+- Eviction: TTL-expired first, then LRU when storage exceeds 500 MB cap.
