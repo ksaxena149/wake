@@ -4,10 +4,10 @@ overview: A single master plan combining the WAKE technical roadmap (7 phases, ~
 todos:
   - id: phase-1
     content: "Phase -1: GitHub Student Pack, repo creation, Git init, monorepo structure, labels, milestones, Projects board, Issue templates, Notion workspace, ADRs"
-    status: pending
+    status: completed
   - id: phase0
     content: "Phase 0: kiwix-serve running locally, ZIM verified, Android Studio blank build succeeds"
-    status: pending
+    status: completed
   - id: phase1
     content: "Phase 1: Python WAKE Gateway Daemon — FastAPI + SQLite + chunker + PyNaCl signing + pytest passing"
     status: pending
@@ -353,15 +353,15 @@ Then open your **ADR Index** in Notion and add all four entries.
 
 The last act of Phase -1 is to pre-populate GitHub with the issues for Phase 0, so your board is ready to go when coding begins.
 
-Go to your repo → **Issues** → **"New issue"** → select the `task` template. Create these 4 issues:
+Go to your repo → **Issues** → **"New issue"** → select the `task` template. Create these 4 issues (matching the Phase 0 summary below):
 
 
 | Title                                                            | Labels               | Milestone       |
 | ---------------------------------------------------------------- | -------------------- | --------------- |
-| `Install kiwix-serve and verify ZIM search API returns HTML`     | `phase-0`, `server`  | Phase 0 — Setup |
-| `Download Simple English Wikipedia ZIM file (~80 MB)`            | `phase-0`, `server`  | Phase 0 — Setup |
-| `Create blank Android Studio project (Kotlin + Jetpack Compose)` | `phase-0`, `android` | Phase 0 — Setup |
-| `Verify blank app builds and runs on physical device`            | `phase-0`, `android` | Phase 0 — Setup |
+| `Install kiwix-serve and download Wikipedia Top Mini ZIM`        | `phase-0`, `server`  | Phase 0 — Setup |
+| `Verify kiwix-serve search API returns HTML in browser`          | `phase-0`, `server`  | Phase 0 — Setup |
+| `Create Android Studio project (Kotlin + Jetpack Compose, verify build)` | `phase-0`, `android` | Phase 0 — Setup |
+| `Write ADRs 001–004`                                             | `phase-0`, `infra`   | Phase 0 — Setup |
 
 
 After creating them, go to your GitHub Projects board. All 4 issues should appear in **Backlog**. Drag them all to **Todo**. Phase -1 is complete.
@@ -376,7 +376,7 @@ After creating them, go to your GitHub Projects board. All 4 issues should appea
 - Folder structure committed and pushed to `main`
 - `dev` branch exists and is pushed to GitHub
 - `main` branch is protected (requires PRs to merge)
-- All 18 labels created in GitHub
+- All 14 labels created in GitHub (7 phase + 4 type + 3 status)
 - All 7 milestones created with due dates
 - GitHub Projects board exists with 5 columns and auto-add enabled
 - Issue templates exist at `.github/ISSUE_TEMPLATE/task.md` and `bug.md`
@@ -479,21 +479,23 @@ Decisions that already need ADRs before Phase 0 starts:
 
 **Issues to create (label: `phase-1 server`, milestone: Phase 1):**
 
-- `#5` Set up FastAPI project skeleton with uvicorn, health check endpoint
+- `#5` Set up FastAPI project skeleton with uvicorn, health check endpoint, `requirements.txt`
 - `#6` Define bundle JSON schema (request + response structs as Pydantic models)
 - `#7` Implement SQLite schema with aiosqlite: `inbound_requests`, `outbound_bundles`, `seen_bundle_ids`
 - `#8` Implement chunker: split response payload into ~100 KB numbered chunks
 - `#9` Implement PyNaCl Ed25519 keypair generation and bundle signing
-- `#10` Implement HTTP endpoints: `POST /request`, `GET /pending`, `GET /bundle/{id}`, `GET /pubkey`
-- `#11` Write pytest tests for: bundle create/serialize, chunker, signature verify/fail
+- `#10` Implement kiwix proxy + HTTP endpoints: `POST /request`, `GET /pending`, `GET /bundle/{id}`, `GET /pubkey`. Proxy logic: if `query_string` starts with `/` treat as article path and call `GET {path}` on kiwix-serve; otherwise treat as search term and call `GET /search?pattern={query_string}`. Return HTML response as chunked bundle payload.
+- `#11` Write pytest tests for: bundle create/serialize, chunker, kiwix proxy routing (search vs article path), signature verify/fail
 
 **Key technical decisions:**
 
 - Bundle format: JSON + base64 payload (not CBOR — readable and debuggable)
 - Request bundle fields: `{node_id, query_id, query_string, timestamp, ttl_seconds, hop_count, signature}`
 - Response bundle fields: `{server_id, query_id, chunk_index, total_chunks, content_type, payload_b64, sha256, signature}`
+- `node_id` is a UUID for Phase 1 testing; Android Keystore identity is deferred to Phase 5
+- Two request types distinguished by `query_string` prefix: plain text = search, `/A/...` = article fetch
 
-**Done when:** `pytest server/tests/` passes. Sending a `POST /request` with a query string returns chunked response bundles at `GET /bundle/{id}`.
+**Done when:** `pytest server/tests/` passes. Sending a `POST /request` with a plain search term returns search results HTML chunks. Sending one with `/A/Water` returns article HTML chunks.
 
 ---
 
@@ -508,11 +510,11 @@ Decisions that already need ADRs before Phase 0 starts:
 - `#14` Implement BundleStoreManager: write/read/evict bundles, LRU policy at 500 MB cap
 - `#15` Implement OkHttp client: POST request bundle, poll `GET /pending`, fetch chunks
 - `#16` Implement chunk reassembly: detect when all chunks for a `query_id` are present, merge bytes
-- `#17` Build UI: Search screen (text field + results), Status screen (storage, last sync)
-- `#18` Build Result screen: WebView rendering reassembled HTML from kiwix
+- `#17` Build UI: Search screen (text field + results list rendered from search HTML), Status screen (storage, last sync)
+- `#18` Build Result screen: WebView rendering reassembled article HTML; override `shouldOverrideUrlLoading` to intercept `/A/...` link taps and fire a new WAKE bundle request instead of navigating directly
 - `#19` Integrate Google Tink: verify server Ed25519 signatures before caching any bundle
 
-**Done when:** Phone on same WiFi as laptop — type a query, HTML article renders in WebView. A tampered bundle (manually edited) is rejected.
+**Done when:** Phone on same WiFi as laptop — type a query, search results render, tap a result, full article renders in WebView. A tampered bundle (manually edited) is rejected.
 
 ---
 
