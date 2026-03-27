@@ -1,10 +1,10 @@
 ---
 name: WAKE Revised Roadmap
-overview: Rebuild the WAKE DTN roadmap around existing solutions — primarily Google Nearby Connections API (replaces all BLE + WiFi Direct code) and kiwix-serve (content layer already built) — reducing scope from 30 weeks to ~14 weeks and making Phases 0–3 doable with 1 phone + laptop.
+overview: Rebuild the WAKE DTN roadmap around existing solutions — primarily Google Nearby Connections API (replaces all BLE + WiFi Direct code) and kiwix-serve (content layer already built) — reducing scope from 30 weeks to ~14 weeks. Phases 0–2 need 1 phone + laptop; Phase 3+ needs 2 phones.
 todos:
   - id: phase0
     content: "Phase 0: Install kiwix-serve, download small ZIM, verify search API, set up Android Studio"
-    status: pending
+    status: completed
   - id: phase1
     content: "Phase 1: Build Python WAKE Gateway Daemon (FastAPI + kiwix-serve + SQLite + PyNaCl signing)"
     status: pending
@@ -62,8 +62,8 @@ flowchart LR
 
 **Needs: laptop only**
 
-- Install kiwix-serve; download **Simple English Wikipedia** ZIM (~80 MB) for fast iteration — not the full NOMAD pack yet
-- Verify kiwix-serve REST API: `GET /search?pattern=...` and `GET /viewer#article_id`
+- Install kiwix-serve; download **English Wikipedia Top Mini** ZIM (`wikipedia_en_top_mini_2026-03.zim`, ~315 MB). Avoid `wikipedia_en_simple_all_mini` — broken builds.
+- Verify kiwix-serve REST API: `GET /search?pattern=...` returns search results HTML; articles at `GET /A/Article_Name`
 - Install Android Studio, create a blank Kotlin + Jetpack Compose project, verify build succeeds
 - Goal: see kiwix content in a browser by end of week
 
@@ -80,6 +80,10 @@ Build the **WAKE Gateway Daemon** — a FastAPI app that sits in front of kiwix-
 - **Bundle format**: Start with **JSON + base64** (not CBOR). Readable, debuggable, no new libraries. Migrate to CBOR only if size becomes a real problem.
   - Request bundle: `{node_id, query_id, query_string, timestamp, ttl_seconds, hop_count, signature}`
   - Response bundle: `{server_id, query_id, chunk_index, total_chunks, content_type, payload_b64, sha256, signature}`
+- **kiwix proxy logic** (two request types, same bundle protocol):
+  - **Search**: `query_string` is a search term → daemon calls `GET /search?pattern={query_string}` on kiwix-serve → returns search results HTML as the bundle payload. Results contain article links of the form `/A/Article_Title`.
+  - **Article fetch**: `query_string` is a kiwix article path (e.g. `/A/Water`) → daemon calls `GET /A/Water` on kiwix-serve → returns full article HTML as the bundle payload.
+  - The daemon distinguishes the two by checking whether `query_string` starts with `/` (article path) or not (search term).
 - **SQLite queue** (`aiosqlite`): tables for `inbound_requests`, `outbound_bundles`, `seen_bundle_ids`
 - **Chunker**: split large HTML/image responses into ~100 KB chunks, each chunk is a separate JSON bundle file
 - **Signing**: `PyNaCl` Ed25519 keypair generated once, stored on disk. Sign every outbound bundle. Expose public key at `GET /pubkey`
@@ -89,6 +93,11 @@ Build the **WAKE Gateway Daemon** — a FastAPI app that sits in front of kiwix-
   - `GET /bundle/{bundle_id}` — fetch a specific bundle file
 
 **Key libraries:** `fastapi`, `uvicorn`, `aiosqlite`, `pynacl`, `httpx`
+
+**Phase 1 notes:**
+- Project skeleton includes `requirements.txt` with pinned versions
+- `node_id` is a UUID for Phase 1 testing; Android Keystore identity deferred to Phase 5
+- Two request types distinguished by `query_string` prefix: plain text = search, `/A/...` path = article fetch
 
 ---
 
@@ -104,12 +113,12 @@ Build the Android app and get a full end-to-end working — search query flows f
 - **HTTP client** (OkHttp): phone POSTs a request bundle to `{server_ip}/request`, then polls `GET /pending?node_id=...` every 10s until all chunks arrive
 - **Chunk reassembly**: when all `total_chunks` are present in Room for a `query_id`, reassemble payload bytes in chunk_index order
 - **UI (Jetpack Compose)**:
-  - Search screen: text field + search button + results list
+  - Search screen: text field + search button + results list rendered from search HTML
   - Status screen: storage used, last sync time
-  - Result screen: `WebView` rendering the reassembled HTML
+  - Result screen: `WebView` rendering reassembled article HTML. Override `shouldOverrideUrlLoading` to intercept `/A/...` link taps and fire a new WAKE bundle request instead of navigating directly to kiwix-serve.
 - **Signing verification**: use `Tink` (Android) to verify Ed25519 signatures from server before accepting any bundle
 
-**Key libraries:** `Room`, `OkHttp`, `Jetpack Compose`, `Google Tink`, `NanoHTTPD` (tiny embedded HTTP server used in next phase)
+**Key libraries:** `Room`, `OkHttp`, `Jetpack Compose`, `Google Tink`
 
 ---
 
@@ -139,7 +148,7 @@ implementation("com.google.android.gms:play-services-nearby:19.1.0")
 
 ---
 
-## Phase 4 — DTN Routing Upgrade (Weeks 9–12)
+## Phase 4 — PRoPHET Routing Upgrade (Weeks 9–12)
 
 **Needs: 2 phones**
 
