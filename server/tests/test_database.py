@@ -137,6 +137,28 @@ async def test_duplicate_chunk_raises(
 
 
 @pytest.mark.asyncio
+async def test_insert_outbound_bundle_does_not_auto_commit(
+    db_path: Path, sample_bundle: ResponseBundle, now: int
+) -> None:
+    """insert_outbound_bundle must leave the transaction open so callers can batch atomically.
+
+    If it auto-committed, the rollback below would be a no-op and a second connection
+    would still see the row.  With the correct behaviour the row is rolled back and the
+    second connection sees nothing.
+    """
+    await init_db(db_path)
+    async with aiosqlite.connect(db_path) as conn:
+        conn.row_factory = aiosqlite.Row
+        await insert_outbound_bundle(conn, sample_bundle, created_at=now)
+        await conn.rollback()  # simulate a mid-batch failure
+
+    async with aiosqlite.connect(db_path) as conn2:
+        conn2.row_factory = aiosqlite.Row
+        chunks = await get_outbound_bundles(conn2, sample_bundle.query_id)
+    assert len(chunks) == 0
+
+
+@pytest.mark.asyncio
 async def test_get_outbound_bundles_returns_pydantic_models(
     db_path: Path, sample_bundle: ResponseBundle, now: int
 ) -> None:

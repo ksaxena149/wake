@@ -100,11 +100,17 @@ async def submit_request(
 
     key = get_signing_key()
     signed_chunks: list[ResponseBundle] = []
-    for chunk in chunks:
-        sig = sign_bundle(key, chunk)
-        signed = chunk.model_copy(update={"signature": sig})
-        await insert_outbound_bundle(db, signed, created_at=now)
-        signed_chunks.append(signed)
+    try:
+        for chunk in chunks:
+            sig = sign_bundle(key, chunk)
+            signed = chunk.model_copy(update={"signature": sig})
+            await insert_outbound_bundle(db, signed, created_at=now)
+            signed_chunks.append(signed)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        logger.exception("Failed to store outbound chunks for query_id=%s", bundle.query_id)
+        raise HTTPException(status_code=500, detail="Failed to store response chunks")
 
     await mark_request_done(db, bundle.query_id)
 

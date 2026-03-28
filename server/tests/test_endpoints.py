@@ -2,6 +2,7 @@ import time
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+import aiosqlite
 import httpx
 import nacl.signing
 import pytest
@@ -273,3 +274,53 @@ async def test_get_bundle_returns_stored_chunks() -> None:
     assert len(chunks) >= 1
     assert chunks[0]["query_id"] == "stored-qid-001"
     assert chunks[0]["signature"] is not None
+
+
+# ---------------------------------------------------------------------------
+# POST /request — chunk atomicity
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_chunk_insertion_is_atomic() -> None:
+    """A DB error on chunk N must roll back chunks 0..N-1 so no partial set is committed.
+
+    Verified by: checking that GET /bundle/{query_id} returns 404 after the 500, meaning
+    no chunks leaked to the database.
+    """
+    # ~210 KiB → 3 chunks at the default 100 KiB chunk size
+    large_html = b"<html>" + b"x" * (210 * 1024) + b"</html>"
+
+    def big_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=large_html, headers={"content-type": "text/html"})
+
+    mock_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(big_handler), base_url="http://kiwix"
+    )
+    app.state.kiwix_client = mock_client
+
+    call_count = 0
+    original_insert = database.insert_outbound_bundle
+
+    async def fail_on_second_chunk(db, bundle, created_at):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            raise aiosqlite.IntegrityError("simulated mid-batch failure")
+        await original_insert(db, bundle, created_at=created_at)
+
+    body = _make_request_body("big article", "atomic-qid-001")
+    transport = httpx.ASGITransport(app=app)
+
+    with patch("main.insert_outbound_bundle", fail_on_second_chunk):
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post("/request", json=body)
+
+    assert resp.status_code == 500
+
+    # No partial chunks must be visible
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+        bundle_resp = await ac.get("/bundle/atomic-qid-001")
+    assert bundle_resp.status_code == 404
+
+    await mock_client.aclose()
