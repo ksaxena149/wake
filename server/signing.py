@@ -47,5 +47,5 @@ def verify_bundle(verify_key: nacl.signing.VerifyKey, bundle: BundleT) -> bool:
         sig_bytes = base64.b64decode(bundle.signature)
         verify_key.verify(_canonical_bytes(bundle), sig_bytes)
         return True
-    except nacl.exceptions.BadSignatureError:
+    except (nacl.exceptions.BadSignatureError, ValueError):
         return False

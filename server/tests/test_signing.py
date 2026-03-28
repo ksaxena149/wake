@@ -159,3 +159,12 @@ def test_verify_returns_false_for_unsigned_bundle(
 ) -> None:
     assert sample_request.signature is None
     assert not verify_bundle(verify_key, sample_request)
+
+
+def test_verify_returns_false_for_invalid_base64_signature(
+    verify_key: nacl.signing.VerifyKey,
+    sample_request: RequestBundle,
+) -> None:
+    # Corrupted base64 must not crash — verify_bundle must return False, not raise.
+    corrupt = sample_request.model_copy(update={"signature": "not valid base64!"})
+    assert not verify_bundle(verify_key, corrupt)
