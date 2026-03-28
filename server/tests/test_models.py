@@ -92,3 +92,16 @@ def test_response_bundle_invalid_chunk_index(valid_response_data: dict) -> None:
 def test_response_bundle_invalid_total_chunks(valid_response_data: dict) -> None:
     with pytest.raises(ValidationError):
         ResponseBundle(**{**valid_response_data, "total_chunks": 0})
+
+
+def test_response_bundle_chunk_index_out_of_bounds(valid_response_data: dict) -> None:
+    # chunk_index=99, total_chunks=3 is logically invalid even though each
+    # field passes its individual constraint; the cross-field check must catch it.
+    with pytest.raises(ValidationError):
+        ResponseBundle(**{**valid_response_data, "chunk_index": 99, "total_chunks": 3})
+
+
+def test_response_bundle_chunk_index_equal_to_total_chunks(valid_response_data: dict) -> None:
+    # chunk_index is 0-based, so chunk_index == total_chunks is also out of bounds.
+    with pytest.raises(ValidationError):
+        ResponseBundle(**{**valid_response_data, "chunk_index": 3, "total_chunks": 3})

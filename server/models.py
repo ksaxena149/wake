@@ -1,6 +1,6 @@
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class RequestBundle(BaseModel):
@@ -30,3 +30,12 @@ class ResponseBundle(BaseModel):
     payload_b64: str  # base64-encoded bytes for this chunk
     sha256: str  # hex SHA-256 of the decoded chunk payload for per-chunk integrity
     signature: Optional[str] = None  # base64 Ed25519; None until issue #9 signs it
+
+    @model_validator(mode="after")
+    def chunk_index_within_bounds(self) -> "ResponseBundle":
+        if self.chunk_index >= self.total_chunks:
+            raise ValueError(
+                f"chunk_index ({self.chunk_index}) must be less than "
+                f"total_chunks ({self.total_chunks})"
+            )
+        return self
