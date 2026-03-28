@@ -76,7 +76,7 @@ async def insert_inbound_request(
 ) -> None:
     await db.execute(
         """
-        INSERT INTO inbound_requests
+        INSERT OR IGNORE INTO inbound_requests
             (query_id, node_id, query_string, timestamp, ttl_seconds,
              hop_count, signature, received_at, status)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')
@@ -141,6 +141,8 @@ async def insert_outbound_bundle(
     bundle: ResponseBundle,
     created_at: int,
 ) -> None:
+    """Execute the INSERT without committing. Caller is responsible for committing
+    (or rolling back) so that multi-chunk batches are stored atomically."""
     await db.execute(
         """
         INSERT INTO outbound_bundles
@@ -160,7 +162,6 @@ async def insert_outbound_bundle(
             created_at,
         ),
     )
-    await db.commit()
 
 
 async def get_outbound_bundles(
