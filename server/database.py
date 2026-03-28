@@ -76,7 +76,7 @@ async def insert_inbound_request(
 ) -> None:
     await db.execute(
         """
-        INSERT INTO inbound_requests
+        INSERT OR IGNORE INTO inbound_requests
             (query_id, node_id, query_string, timestamp, ttl_seconds,
              hop_count, signature, received_at, status)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')

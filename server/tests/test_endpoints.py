@@ -165,6 +165,38 @@ async def test_post_request_kiwix_404_returns_502() -> None:
 
 
 @pytest.mark.asyncio
+async def test_post_request_retry_after_kiwix_failure() -> None:
+    """A retry of the same query_id after a kiwix failure must not 500."""
+    call_count = 0
+
+    def flaky_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return httpx.Response(500)
+        return httpx.Response(200, content=SEARCH_HTML, headers={"content-type": "text/html"})
+
+    mock_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(flaky_handler), base_url="http://kiwix"
+    )
+    app.state.kiwix_client = mock_client
+
+    body = _make_request_body("retry me", "retry-qid-001")
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+        resp1 = await ac.post("/request", json=body)
+        assert resp1.status_code == 502
+
+        resp2 = await ac.post("/request", json=body)
+        assert resp2.status_code == 200
+        chunks = resp2.json()
+        assert chunks[0]["query_id"] == "retry-qid-001"
+        assert chunks[0]["signature"] is not None
+
+    await mock_client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_post_request_kiwix_unreachable_returns_502() -> None:
     mock_fetch = AsyncMock(side_effect=httpx.RequestError("Connection refused"))
 
