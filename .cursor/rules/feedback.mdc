@@ -32,3 +32,9 @@ When starting any new task, scan the entries below first.
 ### YYYY-MM-DD — Short title
 Description of what was corrected and what to do instead.
 -->
+
+### 2026-03-28 — Source directory name must match Kotlin package declaration
+Android's UTP test runner reads the source *directory path* to determine the `-e package` filter sent to AndroidJUnitRunner. If the directory is `com/wake/dtm/` but the Kotlin package is `com.wake.dtn`, UTP will pass the wrong package and find 0 tests. Always ensure `src/main/java/com/foo/bar/` matches `package com.foo.bar` exactly. Fix: rename the directory to match.
+
+### 2026-03-28 — Always write Android instrumented tests alongside implementation
+When implementing Android features, always write automated tests in `androidTest/` that mirror the feature structure (e.g. `androidTest/ui/` for ViewModels, `androidTest/service/` for Services). Use `@RunWith(AndroidJUnit4::class)` and `ServiceTestRule` for service tests. This is the Android equivalent of writing `pytest` tests for server code — do it by default without being asked.
