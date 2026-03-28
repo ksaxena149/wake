@@ -5,6 +5,8 @@ import aiosqlite
 import pytest
 
 from database import (
+    bundle_id_for_request,
+    bundle_id_for_response_chunk,
     get_db,
     init_db,
     insert_inbound_request,
@@ -100,14 +102,67 @@ async def test_mark_request_done_removes_from_pending(
 
 
 @pytest.mark.asyncio
-async def test_seen_deduplication(db_path: Path, now: int) -> None:
+async def test_seen_deduplication_request_uses_query_id_as_bundle_id(
+    db_path: Path, now: int
+) -> None:
     query_id = "test-query-id-abc"
     await init_db(db_path)
     async with aiosqlite.connect(db_path) as db:
         db.row_factory = aiosqlite.Row
-        assert not await is_seen(db, query_id)
-        await mark_seen(db, query_id, seen_at=now)
-        assert await is_seen(db, query_id)
+        bundle_id = bundle_id_for_request(query_id)
+        assert not await is_seen(db, bundle_id)
+        await mark_seen(db, bundle_id, seen_at=now)
+        assert await is_seen(db, bundle_id)
+
+
+@pytest.mark.asyncio
+async def test_seen_deduplication_response_chunks_are_distinct(
+    db_path: Path, now: int
+) -> None:
+    query_id = "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+    b0 = bundle_id_for_response_chunk(query_id, 0)
+    b1 = bundle_id_for_response_chunk(query_id, 1)
+    await init_db(db_path)
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        assert not await is_seen(db, b0)
+        assert not await is_seen(db, b1)
+        await mark_seen(db, b0, seen_at=now)
+        assert await is_seen(db, b0)
+        assert not await is_seen(db, b1)
+
+
+@pytest.mark.asyncio
+async def test_migrate_seen_bundle_ids_renames_query_id_to_bundle_id(
+    db_path: Path, now: int
+) -> None:
+    """Old DBs stored request keys in query_id; init_db migrates to bundle_id."""
+    legacy_qid = "legacy-query"
+    async with aiosqlite.connect(db_path) as db:
+        await db.executescript(
+            """
+            CREATE TABLE seen_bundle_ids (
+                query_id TEXT PRIMARY KEY,
+                seen_at INTEGER NOT NULL
+            );
+            """
+        )
+        await db.execute(
+            "INSERT INTO seen_bundle_ids (query_id, seen_at) VALUES (?, ?)",
+            (legacy_qid, now),
+        )
+        await db.commit()
+
+    await init_db(db_path)
+
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("PRAGMA table_info(seen_bundle_ids)") as cursor:
+            columns = {row[1] for row in await cursor.fetchall()}
+    assert columns == {"bundle_id", "seen_at"}
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        assert await is_seen(db, legacy_qid)
 
 
 @pytest.mark.asyncio

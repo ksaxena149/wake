@@ -1,17 +1,20 @@
 package com.wake.dtn.data
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
 /**
- * Epidemic-routing dedup table. Tracks every bundleId that has passed through
+ * Epidemic-routing dedup table. Tracks every bundle id that has passed through
  * this node, regardless of whether the bundle was stored in the bundles table.
  *
- * Kept intentionally minimal: existence check is O(1) by primary key, and
- * deleteOlderThan allows periodic cleanup so the table never grows unbounded.
+ * [bundleId] matches server `seen_bundle_ids.bundle_id`: request bundles use
+ * `query_id`; each response chunk uses `"$queryId:$chunkIndex"`.
+ *
+ * Column names align with the server SQLite schema (`bundle_id`, `seen_at`).
  */
 @Entity(tableName = "seen_ids")
 data class SeenIdEntity(
-    @PrimaryKey val bundleId: String,
-    val seenAtMs: Long,
+    @PrimaryKey @ColumnInfo(name = "bundle_id") val bundleId: String,
+    @ColumnInfo(name = "seen_at") val seenAtMs: Long,
 )

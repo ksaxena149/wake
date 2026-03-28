@@ -228,7 +228,7 @@ async def test_get_pending_empty() -> None:
 
 @pytest.mark.asyncio
 async def test_get_pending_after_failed_request() -> None:
-    """A request that fails at the kiwix stage stays pending."""
+    """Kiwix failure rolls back inbound + seen_bundle_ids — no phantom pending row."""
 
     def error_handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(500)
@@ -240,10 +240,11 @@ async def test_get_pending_after_failed_request() -> None:
 
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
-        await ac.post("/request", json=_make_request_body("fail", "pending-qid-001"))
+        post = await ac.post("/request", json=_make_request_body("fail", "pending-qid-001"))
+        assert post.status_code == 502
         resp = await ac.get("/pending")
 
-    assert "pending-qid-001" in resp.json()["pending_query_ids"]
+    assert "pending-qid-001" not in resp.json()["pending_query_ids"]
 
     await mock_client.aclose()
 
@@ -318,9 +319,11 @@ async def test_chunk_insertion_is_atomic() -> None:
 
     assert resp.status_code == 500
 
-    # No partial chunks must be visible
+    # Roll back must include outbound chunks, inbound request, and seen ids — not only chunks.
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
         bundle_resp = await ac.get("/bundle/atomic-qid-001")
+        pending = await ac.get("/pending")
     assert bundle_resp.status_code == 404
+    assert "atomic-qid-001" not in pending.json()["pending_query_ids"]
 
     await mock_client.aclose()
