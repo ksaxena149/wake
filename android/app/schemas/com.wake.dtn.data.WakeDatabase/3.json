@@ -1,0 +1,52 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 3,
+    "identityHash": "REGENERATED_BY_KSP_ON_FIRST_BUILD",
+    "entities": [
+      {
+        "tableName": "bundles",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`bundleId` TEXT NOT NULL, `bundleType` TEXT NOT NULL, `queryId` TEXT NOT NULL, `sourceId` TEXT NOT NULL, `timestampMs` INTEGER NOT NULL, `ttlSeconds` INTEGER NOT NULL, `hopCount` INTEGER NOT NULL, `signature` TEXT, `queryString` TEXT, `chunkIndex` INTEGER NOT NULL, `totalChunks` INTEGER NOT NULL, `contentType` TEXT, `payloadSha256` TEXT, `payloadFilePath` TEXT, `receivedAtMs` INTEGER NOT NULL, `isDelivered` INTEGER NOT NULL, `payloadSizeBytes` INTEGER NOT NULL, PRIMARY KEY(`bundleId`))",
+        "fields": [
+          { "fieldPath": "bundleId", "columnName": "bundleId", "affinity": "TEXT", "notNull": true },
+          { "fieldPath": "bundleType", "columnName": "bundleType", "affinity": "TEXT", "notNull": true },
+          { "fieldPath": "queryId", "columnName": "queryId", "affinity": "TEXT", "notNull": true },
+          { "fieldPath": "sourceId", "columnName": "sourceId", "affinity": "TEXT", "notNull": true },
+          { "fieldPath": "timestampMs", "columnName": "timestampMs", "affinity": "INTEGER", "notNull": true },
+          { "fieldPath": "ttlSeconds", "columnName": "ttlSeconds", "affinity": "INTEGER", "notNull": true },
+          { "fieldPath": "hopCount", "columnName": "hopCount", "affinity": "INTEGER", "notNull": true },
+          { "fieldPath": "signature", "columnName": "signature", "affinity": "TEXT", "notNull": false },
+          { "fieldPath": "queryString", "columnName": "queryString", "affinity": "TEXT", "notNull": false },
+          { "fieldPath": "chunkIndex", "columnName": "chunkIndex", "affinity": "INTEGER", "notNull": true },
+          { "fieldPath": "totalChunks", "columnName": "totalChunks", "affinity": "INTEGER", "notNull": true },
+          { "fieldPath": "contentType", "columnName": "contentType", "affinity": "TEXT", "notNull": false },
+          { "fieldPath": "payloadSha256", "columnName": "payloadSha256", "affinity": "TEXT", "notNull": false },
+          { "fieldPath": "payloadFilePath", "columnName": "payloadFilePath", "affinity": "TEXT", "notNull": false },
+          { "fieldPath": "receivedAtMs", "columnName": "receivedAtMs", "affinity": "INTEGER", "notNull": true },
+          { "fieldPath": "isDelivered", "columnName": "isDelivered", "affinity": "INTEGER", "notNull": true },
+          { "fieldPath": "payloadSizeBytes", "columnName": "payloadSizeBytes", "affinity": "INTEGER", "notNull": true }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [ "bundleId" ]
+        }
+      },
+      {
+        "tableName": "seen_ids",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`bundle_id` TEXT NOT NULL, `seen_at` INTEGER NOT NULL, PRIMARY KEY(`bundle_id`))",
+        "fields": [
+          { "fieldPath": "bundleId", "columnName": "bundle_id", "affinity": "TEXT", "notNull": true },
+          { "fieldPath": "seenAtMs", "columnName": "seen_at", "affinity": "INTEGER", "notNull": true }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [ "bundle_id" ]
+        }
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'REGENERATED_BY_KSP_ON_FIRST_BUILD')"
+    ]
+  }
+}

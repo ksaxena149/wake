@@ -23,13 +23,17 @@ interface BundleDao {
     @Query("SELECT * FROM bundles WHERE bundleType = 'RESPONSE' AND queryId = :queryId ORDER BY chunkIndex ASC")
     suspend fun getResponseChunks(queryId: String): List<BundleEntity>
 
-    /** All bundles ordered oldest-received-first — primary input for LRU eviction in #14. */
+    /** All bundles ordered oldest-received-first — primary input for LRU eviction. */
     @Query("SELECT * FROM bundles ORDER BY receivedAtMs ASC")
     suspend fun getAllByReceivedTime(): List<BundleEntity>
 
-    /** Bundles whose TTL window has elapsed — primary input for TTL eviction in #14. */
+    /** Bundles whose TTL window has elapsed — primary input for TTL eviction. */
     @Query("SELECT * FROM bundles WHERE (receivedAtMs + ttlSeconds * 1000) < :nowMs")
     suspend fun getExpired(nowMs: Long): List<BundleEntity>
+
+    /** Total bytes of stored payload files — used by LRU cap check. COALESCE handles empty table. */
+    @Query("SELECT COALESCE(SUM(payloadSizeBytes), 0) FROM bundles")
+    suspend fun getTotalPayloadBytes(): Long
 
     @Delete
     suspend fun delete(bundle: BundleEntity)

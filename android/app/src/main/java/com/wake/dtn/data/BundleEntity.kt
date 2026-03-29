@@ -43,4 +43,6 @@ data class BundleEntity(
     /** Wall-clock time this node received/stored the bundle (epoch ms). Used for LRU eviction. */
     val receivedAtMs: Long,
     val isDelivered: Boolean = false,
+    /** Size of the stored payload file in bytes. Zero for REQUEST bundles and missing files. */
+    val payloadSizeBytes: Long = 0,
 )

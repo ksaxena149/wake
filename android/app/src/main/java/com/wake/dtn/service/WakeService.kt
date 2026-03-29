@@ -6,15 +6,22 @@ import android.content.Intent
 import android.os.Binder
 import android.os.IBinder
 import androidx.core.content.ContextCompat
+import com.wake.dtn.data.BundleStoreManager
+import com.wake.dtn.data.WakeDatabase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 class WakeService : Service() {
 
-    // Coroutine scope tied to the service lifetime. Issues #14/#15 will launch work here.
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    lateinit var bundleStoreManager: BundleStoreManager
+        private set
 
     private val binder = LocalBinder()
 
@@ -26,6 +33,18 @@ class WakeService : Service() {
         super.onCreate()
         NotificationHelper.createChannel(this)
         startForeground(NOTIFICATION_ID, NotificationHelper.buildNotification(this))
+
+        bundleStoreManager = BundleStoreManager(
+            context = this,
+            dao = WakeDatabase.getInstance(this).bundleDao(),
+        )
+
+        scope.launch {
+            while (isActive) {
+                delay(TTL_CHECK_INTERVAL_MS)
+                bundleStoreManager.runTtlEviction()
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -42,6 +61,7 @@ class WakeService : Service() {
 
     companion object {
         const val NOTIFICATION_ID = 1
+        const val TTL_CHECK_INTERVAL_MS = 5 * 60 * 1_000L
 
         fun start(context: Context) {
             ContextCompat.startForegroundService(

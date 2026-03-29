@@ -10,7 +10,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [BundleEntity::class, SeenIdEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -21,6 +21,14 @@ abstract class WakeDatabase : RoomDatabase() {
 
     companion object {
         @Volatile private var instance: WakeDatabase? = null
+
+        val MIGRATION_2_3: Migration = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE bundles ADD COLUMN payloadSizeBytes INTEGER NOT NULL DEFAULT 0",
+                )
+            }
+        }
 
         /** v1 used camelCase columns; align with server `bundle_id` / `seen_at`. */
         val MIGRATION_1_2: Migration = object : Migration(1, 2) {
@@ -51,7 +59,7 @@ abstract class WakeDatabase : RoomDatabase() {
                     context.applicationContext,
                     WakeDatabase::class.java,
                     "wake.db",
-                ).addMigrations(MIGRATION_1_2)
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .build().also { instance = it }
             }
     }
