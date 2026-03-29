@@ -147,11 +147,27 @@ class BundleDaoTest {
     }
 
     @Test
-    fun getAllByReceivedTimeIsAscending() = runTest {
-        dao.insert(responseChunk(chunkIndex = 0, receivedAtMs = 300L))
-        dao.insert(responseChunk(chunkIndex = 1, receivedAtMs = 100L))
-        dao.insert(requestBundle(queryId = "other", bundleId = "other", receivedAtMs = 200L))
+    fun getAllByReceivedTime_isAscendingAndExcludesZeroByteRows() = runTest {
+        dao.insert(responseChunk(chunkIndex = 0, receivedAtMs = 300L).copy(payloadSizeBytes = 50L))
+        dao.insert(responseChunk(chunkIndex = 1, receivedAtMs = 100L).copy(payloadSizeBytes = 30L))
+        // Zero-byte rows: one REQUEST bundle and one RESPONSE with no stored payload.
+        dao.insert(requestBundle(queryId = "req", bundleId = "req", receivedAtMs = 200L))
+        dao.insert(responseChunk(queryId = "empty", chunkIndex = 0, receivedAtMs = 50L))
         val ordered = dao.getAllByReceivedTime()
-        assertEquals(listOf(100L, 200L, 300L), ordered.map { it.receivedAtMs })
+        // Only the two rows with payloadSizeBytes > 0 should be returned, oldest first.
+        assertEquals(listOf(100L, 300L), ordered.map { it.receivedAtMs })
+    }
+
+    @Test
+    fun getTotalPayloadBytes_returnsZeroOnEmptyTable() = runTest {
+        assertEquals(0L, dao.getTotalPayloadBytes())
+    }
+
+    @Test
+    fun getTotalPayloadBytes_sumMatchesInsertedRows() = runTest {
+        dao.insert(responseChunk(chunkIndex = 0).copy(payloadSizeBytes = 100L))
+        dao.insert(responseChunk(chunkIndex = 1).copy(payloadSizeBytes = 250L))
+        dao.insert(requestBundle()) // REQUEST bundles have payloadSizeBytes = 0 by default
+        assertEquals(350L, dao.getTotalPayloadBytes())
     }
 }
