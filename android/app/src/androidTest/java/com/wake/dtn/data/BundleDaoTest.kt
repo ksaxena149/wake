@@ -154,4 +154,17 @@ class BundleDaoTest {
         val ordered = dao.getAllByReceivedTime()
         assertEquals(listOf(100L, 200L, 300L), ordered.map { it.receivedAtMs })
     }
+
+    @Test
+    fun getTotalPayloadBytes_returnsZeroOnEmptyTable() = runTest {
+        assertEquals(0L, dao.getTotalPayloadBytes())
+    }
+
+    @Test
+    fun getTotalPayloadBytes_sumMatchesInsertedRows() = runTest {
+        dao.insert(responseChunk(chunkIndex = 0).copy(payloadSizeBytes = 100L))
+        dao.insert(responseChunk(chunkIndex = 1).copy(payloadSizeBytes = 250L))
+        dao.insert(requestBundle()) // REQUEST bundles have payloadSizeBytes = 0 by default
+        assertEquals(350L, dao.getTotalPayloadBytes())
+    }
 }
