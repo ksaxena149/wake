@@ -23,8 +23,12 @@ interface BundleDao {
     @Query("SELECT * FROM bundles WHERE bundleType = 'RESPONSE' AND queryId = :queryId ORDER BY chunkIndex ASC")
     suspend fun getResponseChunks(queryId: String): List<BundleEntity>
 
-    /** All bundles ordered oldest-received-first — primary input for LRU eviction. */
-    @Query("SELECT * FROM bundles ORDER BY receivedAtMs ASC")
+    /**
+     * Bundles that actually occupy disk space, ordered oldest-received-first.
+     * Zero-byte rows (REQUEST bundles, or RESPONSE rows with no stored payload) are excluded
+     * so LRU eviction only touches candidates that can actually free storage.
+     */
+    @Query("SELECT * FROM bundles WHERE payloadSizeBytes > 0 ORDER BY receivedAtMs ASC")
     suspend fun getAllByReceivedTime(): List<BundleEntity>
 
     /** Bundles whose TTL window has elapsed — primary input for TTL eviction. */

@@ -1,9 +1,11 @@
 package com.wake.dtn.data
 
 import android.content.Context
+import android.util.Log
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.File
+import java.io.IOException
 
 /**
  * Single entry point for all bundle I/O: write metadata to Room, write payload bytes to
@@ -44,14 +46,28 @@ class BundleStoreManager(
         storeMutex.withLock {
             if (dao.getById(entity.bundleId) != null) return
 
-            val entityToInsert = if (payload != null && entity.payloadFilePath != null) {
-                File(filesDir, entity.payloadFilePath).writeBytes(payload)
-                entity.copy(payloadSizeBytes = payload.size.toLong())
+            if (payload != null && entity.payloadFilePath != null) {
+                val finalFile = safeFile(entity.payloadFilePath)
+                    ?: throw IOException("Rejected payload path outside filesDir: ${entity.payloadFilePath}")
+                // Write to a sibling .tmp file so a failed DB insert never leaves a
+                // stray payload file at the real path. The rename below is atomic
+                // (same directory, same filesystem) and only executes after the DB row
+                // is committed, keeping disk and DB in sync.
+                val tempFile = File(finalFile.parent, "${finalFile.name}.tmp")
+                tempFile.writeBytes(payload)
+                try {
+                    dao.insert(entity.copy(payloadSizeBytes = payload.size.toLong()))
+                } catch (e: Exception) {
+                    tempFile.delete()
+                    throw e
+                }
+                if (!tempFile.renameTo(finalFile)) {
+                    tempFile.delete()
+                    throw IOException("Failed to commit payload file: ${entity.payloadFilePath}")
+                }
             } else {
-                entity
+                dao.insert(entity)
             }
-
-            dao.insert(entityToInsert)
         }
         runLruEviction()
     }
@@ -88,11 +104,36 @@ class BundleStoreManager(
 
     /** Remove a bundle's payload file (if any) and its DB row. */
     private suspend fun evict(entity: BundleEntity) {
-        entity.payloadFilePath?.let { File(filesDir, it).delete() }
+        entity.payloadFilePath?.let { path ->
+            val file = safeFile(path)
+            if (file != null && file.exists() && !file.delete()) {
+                // File exists but could not be deleted (e.g. transient I/O error). The DB row is
+                // still removed below so eviction makes forward progress; the orphaned file will
+                // be cleaned up if a future eviction pass can delete it.
+                Log.w(TAG, "Failed to delete payload file: $path (bundleId=${entity.bundleId})")
+            }
+        }
         dao.delete(entity)
     }
 
+    /**
+     * Resolves [relativePath] against [filesDir] and returns the [File] only if the canonical
+     * path is still inside [filesDir]. Returns null for any path that would escape the directory
+     * (absolute paths, `../` traversal, symlinks that point outside, etc.).
+     */
+    private fun safeFile(relativePath: String): File? {
+        val resolved = File(filesDir, relativePath).canonicalFile
+        return if (resolved.path.startsWith(filesDir.canonicalPath + File.separator) ||
+            resolved == filesDir.canonicalFile
+        ) {
+            resolved
+        } else {
+            null
+        }
+    }
+
     companion object {
+        private const val TAG = "BundleStoreManager"
         const val MAX_STORE_BYTES = 500L * 1024 * 1024
     }
 }

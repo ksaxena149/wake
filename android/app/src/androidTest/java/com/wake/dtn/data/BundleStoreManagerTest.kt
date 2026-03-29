@@ -16,6 +16,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.io.IOException
 
 @RunWith(AndroidJUnit4::class)
 class BundleStoreManagerTest {
@@ -144,6 +145,14 @@ class BundleStoreManagerTest {
     }
 
     @Test
+    fun store_noTempFilesRemainAfterSuccessfulStore() = runTest {
+        manager.store(responseEntity(), ByteArray(10))
+        val files = testFilesDir.listFiles() ?: emptyArray()
+        assertTrue("expected exactly one file", files.size == 1)
+        assertFalse("temp file must not survive", files[0].name.endsWith(".tmp"))
+    }
+
+    @Test
     fun store_requestBundle_noFileWritten() = runTest {
         manager.store(requestEntity())
         assertNotNull(db.bundleDao().getById("q1"))
@@ -242,5 +251,34 @@ class BundleStoreManagerTest {
         assertNull(db.bundleDao().getById("q1:0"))
         assertNotNull(db.bundleDao().getById("q2:0"))
         assertNotNull(db.bundleDao().getById("q3:0"))
+    }
+
+    @Test
+    fun runLruEviction_doesNotEvictZeroByteRows() = runTest {
+        // Store a REQUEST bundle (no payload, payloadSizeBytes = 0) at the oldest timestamp.
+        // Then push the store over the cap with a real payload bundle.
+        // LRU must free space by evicting the payload bundle, not the zero-byte REQUEST row.
+        manager.store(requestEntity(queryId = "req", receivedAtMs = 50L))
+        manager.store(responseEntity(queryId = "q1", chunkIndex = 0, receivedAtMs = 200L), ByteArray(60))
+        manager.store(responseEntity(queryId = "q2", chunkIndex = 0, receivedAtMs = 300L), ByteArray(60))
+
+        // Cap = 100; 120 bytes stored. LRU should evict q1 (oldest payload), not the REQUEST row.
+        assertNotNull(db.bundleDao().getById("req"))
+        assertNull(db.bundleDao().getById("q1:0"))
+        assertNotNull(db.bundleDao().getById("q2:0"))
+    }
+
+    // --- path traversal guard ---
+
+    @Test(expected = IOException::class)
+    fun store_rejectsPathTraversal() = runTest {
+        val traversalEntity = responseEntity().copy(payloadFilePath = "../escape.txt")
+        manager.store(traversalEntity, "should not write".toByteArray())
+    }
+
+    @Test(expected = IOException::class)
+    fun store_rejectsAbsolutePath() = runTest {
+        val absoluteEntity = responseEntity().copy(payloadFilePath = "/data/data/com.wake.dtn/evil.txt")
+        manager.store(absoluteEntity, "should not write".toByteArray())
     }
 }

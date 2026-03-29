@@ -8,6 +8,7 @@ import android.os.IBinder
 import androidx.core.content.ContextCompat
 import com.wake.dtn.data.BundleStoreManager
 import com.wake.dtn.data.WakeDatabase
+import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -42,7 +43,11 @@ class WakeService : Service() {
         scope.launch {
             while (isActive) {
                 delay(TTL_CHECK_INTERVAL_MS)
-                bundleStoreManager.runTtlEviction()
+                try {
+                    bundleStoreManager.runTtlEviction()
+                } catch (e: Exception) {
+                    Log.e(TAG, "TTL eviction failed; will retry next interval", e)
+                }
             }
         }
     }
@@ -60,6 +65,7 @@ class WakeService : Service() {
     }
 
     companion object {
+        private const val TAG = "WakeService"
         const val NOTIFICATION_ID = 1
         const val TTL_CHECK_INTERVAL_MS = 5 * 60 * 1_000L
 
