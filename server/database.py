@@ -143,6 +143,18 @@ async def list_pending_query_ids(db: aiosqlite.Connection) -> list[str]:
     return [row["query_id"] for row in rows]
 
 
+async def list_done_query_ids_for_node(
+    db: aiosqlite.Connection, node_id: str
+) -> list[str]:
+    """Return query IDs whose response chunks are ready for pickup by this node."""
+    async with db.execute(
+        "SELECT query_id FROM inbound_requests WHERE status = 'done' AND node_id = ?",
+        (node_id,),
+    ) as cursor:
+        rows = await cursor.fetchall()
+    return [row["query_id"] for row in rows]
+
+
 async def mark_request_done(db: aiosqlite.Connection, query_id: str) -> None:
     await db.execute(
         "UPDATE inbound_requests SET status = 'done' WHERE query_id = ?",

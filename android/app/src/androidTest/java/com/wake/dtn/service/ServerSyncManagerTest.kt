@@ -167,6 +167,22 @@ class ServerSyncManagerTest {
     }
 
     @Test
+    fun pollAndFetch_doesNotRefetchAlreadyFetchedQueryId() = runTest {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(pendingJson("qid-once")))
+        server.enqueue(MockResponse().setResponseCode(200).setBody(chunksJson(chunkJson(queryId = "qid-once"))))
+        syncManager.pollAndFetch()
+
+        server.enqueue(MockResponse().setResponseCode(200).setBody(pendingJson("qid-once")))
+        syncManager.pollAndFetch()
+
+        assertEquals(
+            "First poll makes /pending + /bundle; second poll makes only /pending",
+            3,
+            server.requestCount,
+        )
+    }
+
+    @Test
     fun pollAndFetch_emitsReassembledBundle_whenAllChunksArriveWithCorrectSha256() = runTest {
         // SHA-256 of the bytes decoded from "aGVsbG8=" (== "hello").
         val sha256OfHello = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"

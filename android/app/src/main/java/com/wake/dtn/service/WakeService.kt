@@ -41,6 +41,16 @@ class WakeService : Service() {
     /** The most recently reassembled bundle. Observe from [MainViewModel] or UI to render content. */
     val latestBundle: StateFlow<ReassembledBundle?> = _latestBundle.asStateFlow()
 
+    private val _lastSyncTimeMs = MutableStateFlow<Long?>(null)
+
+    /** Wall-clock time of the most recent successful [ServerSyncManager.pollAndFetch] call. */
+    val lastSyncTimeMs: StateFlow<Long?> = _lastSyncTimeMs.asStateFlow()
+
+    private val _totalStorageBytesFlow = MutableStateFlow(0L)
+
+    /** Total payload bytes currently held in the bundle store. Updated after each TTL eviction pass. */
+    val totalStorageBytesFlow: StateFlow<Long> = _totalStorageBytesFlow.asStateFlow()
+
     private val binder = LocalBinder()
 
     inner class LocalBinder : Binder() {
@@ -76,6 +86,7 @@ class WakeService : Service() {
             while (isActive) {
                 try {
                     bundleStoreManager.runTtlEviction()
+                    _totalStorageBytesFlow.value = bundleStoreManager.getTotalPayloadBytes()
                 } catch (e: Exception) {
                     Log.e(TAG, "TTL eviction failed; will retry next interval", e)
                 }
@@ -87,6 +98,7 @@ class WakeService : Service() {
             while (isActive) {
                 try {
                     syncManager.pollAndFetch()
+                    _lastSyncTimeMs.value = System.currentTimeMillis()
                 } catch (e: Exception) {
                     Log.e(TAG, "Sync poll failed; will retry next interval", e)
                 }
@@ -114,7 +126,7 @@ class WakeService : Service() {
         const val SYNC_INTERVAL_MS = 30 * 1_000L
 
         /** Change to your laptop's LAN IP for on-device testing; issue #37 makes this configurable. */
-        const val SERVER_BASE_URL = "http://192.168.1.90:8000"
+        const val SERVER_BASE_URL = "http://192.168.1.11:8000"
 
         fun start(context: Context) {
             ContextCompat.startForegroundService(

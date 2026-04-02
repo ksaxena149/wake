@@ -221,9 +221,23 @@ async def test_post_request_kiwix_unreachable_returns_502() -> None:
 async def test_get_pending_empty() -> None:
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
-        resp = await ac.get("/pending")
+        resp = await ac.get("/pending", params={"node_id": "550e8400-e29b-41d4-a716-446655440000"})
     assert resp.status_code == 200
     assert resp.json() == {"pending_query_ids": []}
+
+
+@pytest.mark.asyncio
+async def test_get_pending_returns_done_query() -> None:
+    """After a successful POST /request the query_id shows up in GET /pending for that node."""
+    node_id = "550e8400-e29b-41d4-a716-446655440000"
+    body = _make_request_body("water cycle", "pending-done-qid-001")
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+        post = await ac.post("/request", json=body)
+        assert post.status_code == 200
+        resp = await ac.get("/pending", params={"node_id": node_id})
+    assert resp.status_code == 200
+    assert "pending-done-qid-001" in resp.json()["pending_query_ids"]
 
 
 @pytest.mark.asyncio
@@ -242,7 +256,7 @@ async def test_get_pending_after_failed_request() -> None:
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
         post = await ac.post("/request", json=_make_request_body("fail", "pending-qid-001"))
         assert post.status_code == 502
-        resp = await ac.get("/pending")
+        resp = await ac.get("/pending", params={"node_id": "550e8400-e29b-41d4-a716-446655440000"})
 
     assert "pending-qid-001" not in resp.json()["pending_query_ids"]
 
@@ -322,7 +336,7 @@ async def test_chunk_insertion_is_atomic() -> None:
     # Roll back must include outbound chunks, inbound request, and seen ids — not only chunks.
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
         bundle_resp = await ac.get("/bundle/atomic-qid-001")
-        pending = await ac.get("/pending")
+        pending = await ac.get("/pending", params={"node_id": "550e8400-e29b-41d4-a716-446655440000"})
     assert bundle_resp.status_code == 404
     assert "atomic-qid-001" not in pending.json()["pending_query_ids"]
 

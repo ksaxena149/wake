@@ -17,6 +17,7 @@ from database import (
     init_db,
     insert_inbound_request,
     insert_outbound_bundle,
+    list_done_query_ids_for_node,
     list_pending_query_ids,
     mark_request_done,
     mark_seen,
@@ -140,9 +141,9 @@ async def submit_request(
 
 
 @app.get("/pending")
-async def list_pending(db=Depends(get_db)):
-    """Return query IDs of requests that have not yet been fulfilled."""
-    return {"pending_query_ids": await list_pending_query_ids(db)}
+async def list_pending(node_id: str, db=Depends(get_db)):
+    """Return query IDs whose response chunks are ready for pickup by this node."""
+    return {"pending_query_ids": await list_done_query_ids_for_node(db, node_id)}
 
 
 @app.get("/bundle/{query_id}")

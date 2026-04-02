@@ -23,6 +23,8 @@ class ServerSyncManager(
     val nodeId: String,
     private val reassembler: BundleReassembler,
 ) {
+    private val fetchedQueryIds = mutableSetOf<String>()
+
     private val _reassembledBundles = MutableSharedFlow<ReassembledBundle>(
         replay = 0,
         extraBufferCapacity = 16,
@@ -38,6 +40,7 @@ class ServerSyncManager(
      * on non-2xx responses.
      */
     suspend fun submitRequest(queryId: String, queryString: String) {
+        fetchedQueryIds.remove(queryId)
         httpClient.submitRequest(
             nodeId = nodeId,
             queryId = queryId,
@@ -55,8 +58,10 @@ class ServerSyncManager(
 
         Log.d(TAG, "pollAndFetch: found ${pending.size} pending IDs")
         for (queryId in pending) {
+            if (queryId in fetchedQueryIds) continue
             runCatching {
                 storeChunks(httpClient.fetchBundle(queryId))
+                fetchedQueryIds.add(queryId)
             }.onFailure { e ->
                 Log.w(TAG, "Failed to fetch bundle for queryId=$queryId", e)
             }
