@@ -3,18 +3,35 @@ package com.wake.dtn.service
 import android.util.Base64
 import android.util.Log
 import com.wake.dtn.data.BundleEntity
+import com.wake.dtn.data.BundleReassembler
 import com.wake.dtn.data.BundleStoreManager
 import com.wake.dtn.data.BundleType
+import com.wake.dtn.data.ReassembledBundle
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 
 /**
  * Orchestrates WAKE server sync: submits request bundles, polls for pending results,
- * fetches response chunks, and stores them via [BundleStoreManager].
+ * fetches response chunks, stores them via [BundleStoreManager], and emits a
+ * [ReassembledBundle] on [reassembledBundles] whenever all chunks for a query arrive.
  */
 class ServerSyncManager(
     private val httpClient: WakeHttpClient,
     private val storeManager: BundleStoreManager,
     val nodeId: String,
+    private val reassembler: BundleReassembler,
 ) {
+    private val _reassembledBundles = MutableSharedFlow<ReassembledBundle>(
+        replay = 0,
+        extraBufferCapacity = 16,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+
+    /** Emits once per [ReassembledBundle] when all chunks for a query ID have arrived. */
+    val reassembledBundles: SharedFlow<ReassembledBundle> = _reassembledBundles.asSharedFlow()
+
     /**
      * POST a request bundle to the server. Fire-and-forget: the server queues the request
      * and response chunks are collected later via [pollAndFetch]. Throws [java.io.IOException]
@@ -47,11 +64,19 @@ class ServerSyncManager(
     }
 
     private suspend fun storeChunks(chunks: List<ResponseBundleDto>) {
+        if (chunks.isEmpty()) return
         val nowMs = System.currentTimeMillis()
         for (chunk in chunks) {
             val payloadBytes = Base64.decode(chunk.payloadB64, Base64.DEFAULT)
             storeManager.store(chunk.toEntity(nowMs), payloadBytes)
         }
+        val queryId = chunks[0].queryId
+        // Call reassemble directly: it returns null when chunks are still missing, so no separate
+        // isComplete query is needed. This also closes the TOCTOU window where TTL eviction could
+        // remove a chunk between an isComplete check and the subsequent reassemble call.
+        runCatching { reassembler.reassemble(queryId) }
+            .onSuccess { bundle -> if (bundle != null) _reassembledBundles.emit(bundle) }
+            .onFailure { e -> Log.w(TAG, "Reassembly failed for queryId=$queryId", e) }
     }
 
     companion object {

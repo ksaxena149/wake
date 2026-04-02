@@ -6,7 +6,9 @@ import android.content.Intent
 import android.os.Binder
 import android.os.IBinder
 import androidx.core.content.ContextCompat
+import com.wake.dtn.data.BundleReassembler
 import com.wake.dtn.data.BundleStoreManager
+import com.wake.dtn.data.ReassembledBundle
 import com.wake.dtn.data.WakeDatabase
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
@@ -14,6 +16,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.UUID
@@ -30,6 +35,11 @@ class WakeService : Service() {
 
     lateinit var syncManager: ServerSyncManager
         private set
+
+    private val _latestBundle = MutableStateFlow<ReassembledBundle?>(null)
+
+    /** The most recently reassembled bundle. Observe from [MainViewModel] or UI to render content. */
+    val latestBundle: StateFlow<ReassembledBundle?> = _latestBundle.asStateFlow()
 
     private val binder = LocalBinder()
 
@@ -53,7 +63,14 @@ class WakeService : Service() {
             httpClient = WakeHttpClient(baseUrl = SERVER_BASE_URL),
             storeManager = bundleStoreManager,
             nodeId = nodeId,
+            reassembler = BundleReassembler(bundleStoreManager, filesDir),
         )
+
+        scope.launch {
+            syncManager.reassembledBundles.collect { bundle ->
+                _latestBundle.value = bundle
+            }
+        }
 
         scope.launch {
             while (isActive) {

@@ -4,9 +4,14 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.wake.dtn.data.BundleReassembler
 import com.wake.dtn.data.BundleStoreManager
 import com.wake.dtn.data.BundleType
+import com.wake.dtn.data.ReassembledBundle
 import com.wake.dtn.data.WakeDatabase
+import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -54,6 +59,7 @@ class ServerSyncManagerTest {
             httpClient = WakeHttpClient(baseUrl = server.url("/").toString().trimEnd('/')),
             storeManager = storeManager,
             nodeId = "test-node-id",
+            reassembler = BundleReassembler(storeManager, testFilesDir),
         )
     }
 
@@ -71,8 +77,9 @@ class ServerSyncManagerTest {
         queryId: String = "qid-1",
         chunkIndex: Int = 0,
         totalChunks: Int = 1,
+        // "aGVsbG8=" is base64("hello"); sha256 must match the decoded bytes.
         payloadB64: String = "aGVsbG8=",
-        sha256: String = "deadbeef",
+        sha256: String = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
     ) = """{"server_id":"wake-server-01","query_id":"$queryId","chunk_index":$chunkIndex,""" +
         """"total_chunks":$totalChunks,"content_type":"text/html","payload_b64":"$payloadB64",""" +
         """"sha256":"$sha256","signature":null}"""
@@ -109,7 +116,7 @@ class ServerSyncManagerTest {
     fun submitRequest_noPayloadFileWritten() = runTest {
         server.enqueue(MockResponse().setResponseCode(200).setBody("{}"))
         syncManager.submitRequest("qid-1", "water cycle")
-        assertTrue("no bundle file should be written on submit", testFilesDir.listFiles()!!.isEmpty())
+        assertTrue("no bundle file should be written on submit", testFilesDir.listFiles().orEmpty().isEmpty())
     }
 
     // --- pollAndFetch ---
@@ -157,5 +164,30 @@ class ServerSyncManagerTest {
         // No /bundle/ requests should have been made
         assertEquals(1, server.requestCount) // only the /pending call
         assertTrue(db.bundleDao().getByQueryId("any").isEmpty())
+    }
+
+    @Test
+    fun pollAndFetch_emitsReassembledBundle_whenAllChunksArriveWithCorrectSha256() = runTest {
+        // SHA-256 of the bytes decoded from "aGVsbG8=" (== "hello").
+        val sha256OfHello = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        server.enqueue(MockResponse().setResponseCode(200).setBody(pendingJson("qid-emit")))
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                chunksJson(chunkJson(queryId = "qid-emit", sha256 = sha256OfHello))
+            )
+        )
+
+        // Subscribe before polling so the SharedFlow (replay=0) emission is not missed.
+        // UnconfinedTestDispatcher runs the async block eagerly until it suspends at .first().
+        val bundleDeferred = async(UnconfinedTestDispatcher(testScheduler)) {
+            syncManager.reassembledBundles.first()
+        }
+
+        syncManager.pollAndFetch()
+
+        val bundle: ReassembledBundle = bundleDeferred.await()
+        assertEquals("qid-emit", bundle.queryId)
+        assertEquals("text/html", bundle.contentType)
+        assertArrayEquals("hello".toByteArray(), bundle.bytes)
     }
 }
