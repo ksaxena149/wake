@@ -47,8 +47,8 @@ class BundleStoreManagerTest {
 
     @After
     fun tearDown() {
-        db.close()
-        testFilesDir.deleteRecursively()
+        if (::db.isInitialized) runCatching { db.close() }
+        if (::testFilesDir.isInitialized) testFilesDir.deleteRecursively()
     }
 
     // --- helpers ---
