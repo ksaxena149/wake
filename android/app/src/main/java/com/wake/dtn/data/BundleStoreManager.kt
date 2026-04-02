@@ -102,6 +102,8 @@ class BundleStoreManager(
         }
     }
 
+    suspend fun getTotalPayloadBytes(): Long = dao.getTotalPayloadBytes()
+
     /** Remove a bundle's payload file (if any) and its DB row. */
     private suspend fun evict(entity: BundleEntity) {
         entity.payloadFilePath?.let { path ->

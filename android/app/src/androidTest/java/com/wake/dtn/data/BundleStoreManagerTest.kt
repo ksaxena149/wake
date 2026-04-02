@@ -268,6 +268,28 @@ class BundleStoreManagerTest {
         assertNotNull(db.bundleDao().getById("q2:0"))
     }
 
+    // --- getTotalPayloadBytes ---
+
+    @Test
+    fun getTotalPayloadBytes_returnsZeroWhenEmpty() = runTest {
+        assertEquals(0L, manager.getTotalPayloadBytes())
+    }
+
+    @Test
+    fun getTotalPayloadBytes_reflectsStoredPayloadSize() = runTest {
+        val payload = ByteArray(42)
+        manager.store(responseEntity(), payload)
+        assertEquals(42L, manager.getTotalPayloadBytes())
+    }
+
+    @Test
+    fun getTotalPayloadBytes_sumAcrossMultipleBundles() = runTest {
+        manager.store(responseEntity(queryId = "q1", chunkIndex = 0, receivedAtMs = 100L), ByteArray(20))
+        // Second store: 20+20=40 bytes, under cap of 100 — no eviction.
+        manager.store(responseEntity(queryId = "q2", chunkIndex = 0, receivedAtMs = 200L), ByteArray(20))
+        assertEquals(40L, manager.getTotalPayloadBytes())
+    }
+
     // --- path traversal guard ---
 
     @Test(expected = IOException::class)

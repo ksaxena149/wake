@@ -1,91 +1,105 @@
 package com.wake.dtn
 
-import android.Manifest
-import android.os.Build
+import android.content.ComponentName
+import android.content.Intent
+import android.content.ServiceConnection
 import android.os.Bundle
+import android.os.IBinder
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.Icon
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
+import androidx.lifecycle.lifecycleScope
+import com.wake.dtn.service.WakeService
 import com.wake.dtn.ui.MainViewModel
+import com.wake.dtn.ui.SearchScreen
+import com.wake.dtn.ui.StatusScreen
+import com.wake.dtn.ui.WakeScreen
 import com.wake.dtn.ui.theme.WakeTheme
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
     private val viewModel: MainViewModel by viewModels()
+
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName, binder: IBinder) {
+            val service = (binder as WakeService.LocalBinder).getService()
+            viewModel.setNodeId(service.syncManager.nodeId)
+            lifecycleScope.launch {
+                service.latestBundle.filterNotNull().collect { viewModel.onBundleArrived(it) }
+            }
+            lifecycleScope.launch {
+                service.lastSyncTimeMs.filterNotNull().collect { viewModel.onSyncTimeUpdated(it) }
+            }
+            lifecycleScope.launch {
+                service.totalStorageBytesFlow.collect { viewModel.onStorageUpdated(it) }
+            }
+        }
+
+        override fun onServiceDisconnected(name: ComponentName) {
+            viewModel.setNodeId(null)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
             WakeTheme {
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    RelayControlScreen(
-                        viewModel = viewModel,
-                        modifier = Modifier.padding(innerPadding),
-                    )
+                val currentScreen by viewModel.currentScreen.collectAsState()
+                Scaffold(
+                    bottomBar = {
+                        NavigationBar {
+                            NavigationBarItem(
+                                selected = currentScreen == WakeScreen.SEARCH,
+                                onClick = { viewModel.navigateTo(WakeScreen.SEARCH) },
+                                icon = { Icon(Icons.Default.Search, contentDescription = "Search") },
+                                label = { Text("Search") },
+                            )
+                            NavigationBarItem(
+                                selected = currentScreen == WakeScreen.STATUS,
+                                onClick = { viewModel.navigateTo(WakeScreen.STATUS) },
+                                icon = { Icon(Icons.Default.Info, contentDescription = "Status") },
+                                label = { Text("Status") },
+                            )
+                        }
+                    },
+                ) { innerPadding ->
+                    when (currentScreen) {
+                        WakeScreen.SEARCH -> SearchScreen(viewModel, Modifier.padding(innerPadding))
+                        WakeScreen.STATUS -> StatusScreen(viewModel, Modifier.padding(innerPadding))
+                    }
                 }
             }
         }
     }
-}
 
-@Composable
-fun RelayControlScreen(viewModel: MainViewModel, modifier: Modifier = Modifier) {
-    val isRunning by viewModel.isRunning.collectAsState()
-    val context = LocalContext.current
-
-    val notificationPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission(),
-    ) { _ ->
-        // Start relay regardless of permission result — the OS will silently suppress
-        // the notification on denial, but the service still runs.
-        viewModel.startRelay(context)
-    }
-
-    Column(
-        modifier = modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Text(
-            text = if (isRunning) "Relay: active" else "Relay: stopped",
-            style = MaterialTheme.typography.titleMedium,
+    override fun onStart() {
+        super.onStart()
+        bindService(
+            Intent(this, WakeService::class.java),
+            serviceConnection,
+            BIND_AUTO_CREATE,
         )
+    }
 
-        Spacer(modifier = Modifier.height(24.dp))
-
-        Button(onClick = {
-            if (isRunning) {
-                viewModel.stopRelay(context)
-            } else {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                } else {
-                    viewModel.startRelay(context)
-                }
-            }
-        }) {
-            Text(if (isRunning) "Stop relay" else "Start relay")
-        }
+    override fun onStop() {
+        super.onStop()
+        unbindService(serviceConnection)
+        viewModel.setNodeId(null)
     }
 }
