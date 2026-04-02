@@ -4,7 +4,6 @@ import android.content.Intent
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.ServiceTestRule
-import kotlinx.coroutines.isActive
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -41,6 +40,6 @@ class WakeServiceTest {
     @Test
     fun coroutineScope_isActiveAfterBind() {
         val service = bindToService()
-        assertTrue(service.scope.isActive)
+        assertTrue(service.isScopeActive)
     }
 }

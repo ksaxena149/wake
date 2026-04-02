@@ -28,7 +28,9 @@ class BundleDaoTest {
     }
 
     @After
-    fun closeDb() = db.close()
+    fun closeDb() {
+        if (::db.isInitialized) runCatching { db.close() }
+    }
 
     // --- helpers ---
 

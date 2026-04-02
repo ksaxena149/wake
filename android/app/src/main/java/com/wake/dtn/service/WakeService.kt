@@ -16,12 +16,19 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 class WakeService : Service() {
 
-    val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** True while the service is alive and its background coroutines are running. */
+    val isScopeActive: Boolean get() = scope.isActive
 
     lateinit var bundleStoreManager: BundleStoreManager
+        private set
+
+    lateinit var syncManager: ServerSyncManager
         private set
 
     private val binder = LocalBinder()
@@ -40,14 +47,33 @@ class WakeService : Service() {
             dao = WakeDatabase.getInstance(this).bundleDao(),
         )
 
+        // Node identity is ephemeral for Phase 2; persistent Keystore identity is issue #31.
+        val nodeId = UUID.randomUUID().toString()
+        syncManager = ServerSyncManager(
+            httpClient = WakeHttpClient(baseUrl = SERVER_BASE_URL),
+            storeManager = bundleStoreManager,
+            nodeId = nodeId,
+        )
+
         scope.launch {
             while (isActive) {
-                delay(TTL_CHECK_INTERVAL_MS)
                 try {
                     bundleStoreManager.runTtlEviction()
                 } catch (e: Exception) {
                     Log.e(TAG, "TTL eviction failed; will retry next interval", e)
                 }
+                delay(TTL_CHECK_INTERVAL_MS)
+            }
+        }
+
+        scope.launch {
+            while (isActive) {
+                try {
+                    syncManager.pollAndFetch()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Sync poll failed; will retry next interval", e)
+                }
+                delay(SYNC_INTERVAL_MS)
             }
         }
     }
@@ -68,6 +94,10 @@ class WakeService : Service() {
         private const val TAG = "WakeService"
         const val NOTIFICATION_ID = 1
         const val TTL_CHECK_INTERVAL_MS = 5 * 60 * 1_000L
+        const val SYNC_INTERVAL_MS = 30 * 1_000L
+
+        /** Change to your laptop's LAN IP for on-device testing; issue #37 makes this configurable. */
+        const val SERVER_BASE_URL = "http://192.168.1.90:8000"
 
         fun start(context: Context) {
             ContextCompat.startForegroundService(

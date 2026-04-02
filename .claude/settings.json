@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pytest server/tests/*)",
+      "Bash(cd android && ./gradlew assembleDebug)",
+      "Bash(cd android && ./gradlew connectedDebugAndroidTest*)",
+      "Bash(kiwix-serve*)",
+      "Bash(uvicorn*)",
+      "Bash(git status)",
+      "Bash(git diff*)",
+      "Bash(git log*)"
+    ],
+    "deny": []
+  }
+}

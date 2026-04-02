@@ -27,7 +27,9 @@ class SeenIdDaoTest {
     }
 
     @After
-    fun closeDb() = db.close()
+    fun closeDb() {
+        if (::db.isInitialized) runCatching { db.close() }
+    }
 
     @Test
     fun existsReturnsFalseBeforeInsert() = runTest {

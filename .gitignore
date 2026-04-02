@@ -8,6 +8,10 @@ Thumbs.db
 *.swo
 *~
 
+# --- Claude Code (local machine settings only) ---
+.claude/settings.local.json
+.claude/projects/
+
 # --- Python (server/) ---
 __pycache__/
 *.py[cod]
