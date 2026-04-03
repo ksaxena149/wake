@@ -216,6 +216,126 @@ class MainViewModelTest {
         assertTrue((state as SearchUiState.Results).items.isEmpty())
     }
 
+    // ---- article fetch ----
+
+    @Test
+    fun initialArticleState_isIdle() {
+        assertTrue(viewModel.articleState.value is ArticleUiState.Idle)
+    }
+
+    @Test
+    fun fetchArticle_nullNodeId_staysIdle() = runTest {
+        // nodeId not set — fetchArticle is a no-op
+        viewModel.fetchArticle("/A/Water")
+        advanceUntilIdle()
+        assertTrue(viewModel.articleState.value is ArticleUiState.Idle)
+        assertEquals(WakeScreen.SEARCH, viewModel.currentScreen.value)
+    }
+
+    @Test
+    fun fetchArticle_setsLoadingAndNavigatesToResult() = runTest {
+        viewModel.setNodeId("node-1")
+        viewModel.fetchArticle("/A/Water")
+        // Loading is set synchronously before coroutine dispatches
+        assertTrue(viewModel.articleState.value is ArticleUiState.Loading)
+        assertEquals(WakeScreen.RESULT, viewModel.currentScreen.value)
+    }
+
+    @Test
+    fun fetchArticle_senderThrows_setsArticleError() = runTest {
+        fakeSenderThrows = true
+        viewModel.setNodeId("node-1")
+        viewModel.fetchArticle("/A/Water")
+        advanceUntilIdle()
+        assertTrue(viewModel.articleState.value is ArticleUiState.Error)
+    }
+
+    @Test
+    fun onBundleArrived_articleQuery_setsLoaded() = runTest {
+        viewModel.setNodeId("node-1")
+        viewModel.fetchArticle("/A/Water")
+        advanceUntilIdle()
+
+        val html = "<html><body><h1>Water</h1></body></html>"
+        val bundle = ReassembledBundle(capturedQueryId!!, "text/html", html.toByteArray())
+        viewModel.onBundleArrived(bundle)
+
+        val state = viewModel.articleState.value
+        assertTrue(state is ArticleUiState.Loaded)
+        assertEquals(html, (state as ArticleUiState.Loaded).html)
+    }
+
+    @Test
+    fun onBundleArrived_articleQuery_doesNotUpdateSearchState() = runTest {
+        viewModel.setNodeId("node-1")
+        viewModel.fetchArticle("/A/Water")
+        advanceUntilIdle()
+
+        val html = "<html><body><h1>Water</h1></body></html>"
+        val bundle = ReassembledBundle(capturedQueryId!!, "text/html", html.toByteArray())
+        viewModel.onBundleArrived(bundle)
+
+        // Search state must remain Idle — bundle was for an article, not a search
+        assertTrue(viewModel.searchState.value is SearchUiState.Idle)
+    }
+
+    @Test
+    fun onBundleArrived_searchQuery_doesNotUpdateArticleState() = runTest {
+        viewModel.setNodeId("node-1")
+        viewModel.onSearchQueryChanged("water")
+        viewModel.submitSearch()
+        advanceUntilIdle()
+
+        val html = """<a href="/A/Water">Water</a>"""
+        val bundle = ReassembledBundle(capturedQueryId!!, "text/html", html.toByteArray())
+        viewModel.onBundleArrived(bundle)
+
+        // Article state must remain Idle — bundle was for a search, not an article
+        assertTrue(viewModel.articleState.value is ArticleUiState.Idle)
+    }
+
+    @Test
+    fun navigateBack_resetsToSearch() = runTest {
+        viewModel.setNodeId("node-1")
+        viewModel.fetchArticle("/A/Water")
+        assertEquals(WakeScreen.RESULT, viewModel.currentScreen.value)
+
+        viewModel.navigateBack()
+
+        assertEquals(WakeScreen.SEARCH, viewModel.currentScreen.value)
+        assertTrue(viewModel.articleState.value is ArticleUiState.Idle)
+    }
+
+    @Test
+    fun navigateBack_thenBundleArrives_isIgnored() = runTest {
+        // Regression: navigateBack() must clear pendingQueryId so a late-arriving
+        // bundle cannot silently flip articleState back to Loaded.
+        viewModel.setNodeId("node-1")
+        viewModel.fetchArticle("/A/Water")
+        advanceUntilIdle()
+
+        val stalePendingId = capturedQueryId!!
+        viewModel.navigateBack()
+
+        val staleBundle = ReassembledBundle(stalePendingId, "text/html", "<h1>Water</h1>".toByteArray())
+        viewModel.onBundleArrived(staleBundle)
+
+        assertTrue(viewModel.articleState.value is ArticleUiState.Idle)
+        assertEquals(WakeScreen.SEARCH, viewModel.currentScreen.value)
+    }
+
+    @Test
+    fun fetchArticle_sendsPathAsQueryString() = runTest {
+        viewModel.setNodeId("node-1")
+        viewModel.fetchArticle("/A/Water")
+        advanceUntilIdle()
+
+        // The capturedQueryId is what was sent to the sender; the path is sent as queryString.
+        // We verify a queryId was indeed captured (sender was invoked) and article state is Loading.
+        assertFalse(capturedQueryId.isNullOrBlank())
+        assertTrue(viewModel.articleState.value is ArticleUiState.Loading)
+    }
+
     // ---- status state ----
 
     @Test

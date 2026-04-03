@@ -1,5 +1,6 @@
 package com.wake.dtn.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -83,6 +84,7 @@ fun SearchScreen(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                                 style = MaterialTheme.typography.bodyLarge,
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .clickable { viewModel.fetchArticle(result.path) }
                                     .padding(vertical = 12.dp),
                             )
                             HorizontalDivider()
