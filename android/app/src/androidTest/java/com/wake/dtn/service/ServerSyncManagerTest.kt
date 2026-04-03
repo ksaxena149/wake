@@ -1,9 +1,11 @@
 package com.wake.dtn.service
 
 import android.content.Context
+import android.util.Base64
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.google.crypto.tink.subtle.Ed25519Sign
 import com.wake.dtn.data.BundleReassembler
 import com.wake.dtn.data.BundleStoreManager
 import com.wake.dtn.data.BundleType
@@ -35,12 +37,19 @@ class ServerSyncManagerTest {
     private lateinit var syncManager: ServerSyncManager
     private lateinit var testFilesDir: File
 
+    // Ed25519 key pair for signing test chunks.
+    private lateinit var keyPair: Ed25519Sign.KeyPair
+    private lateinit var signer: Ed25519Sign
+
     private val context: Context get() = ApplicationProvider.getApplicationContext()
 
     @Before
     fun setUp() {
         server = MockWebServer()
         server.start()
+
+        keyPair = Ed25519Sign.KeyPair.newKeyPair()
+        signer = Ed25519Sign(keyPair.privateKey)
 
         db = Room.inMemoryDatabaseBuilder(context, WakeDatabase::class.java)
             .allowMainThreadQueries()
@@ -55,11 +64,13 @@ class ServerSyncManagerTest {
             dao = db.bundleDao(),
         )
 
+        // Inject the key directly so tests don't need to enqueue a /pubkey mock response.
         syncManager = ServerSyncManager(
             httpClient = WakeHttpClient(baseUrl = server.url("/").toString().trimEnd('/')),
             storeManager = storeManager,
             nodeId = "test-node-id",
             reassembler = BundleReassembler(storeManager, testFilesDir),
+            pubkeyProvider = { keyPair.publicKey },
         )
     }
 
@@ -73,16 +84,38 @@ class ServerSyncManagerTest {
 
     // --- helpers ---
 
+    /** Build an unsigned chunk JSON (used for negative-path tests). */
     private fun chunkJson(
         queryId: String = "qid-1",
         chunkIndex: Int = 0,
         totalChunks: Int = 1,
-        // "aGVsbG8=" is base64("hello"); sha256 must match the decoded bytes.
         payloadB64: String = "aGVsbG8=",
         sha256: String = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+        signature: String? = null,
     ) = """{"server_id":"wake-server-01","query_id":"$queryId","chunk_index":$chunkIndex,""" +
         """"total_chunks":$totalChunks,"content_type":"text/html","payload_b64":"$payloadB64",""" +
-        """"sha256":"$sha256","signature":null}"""
+        """"sha256":"$sha256","signature":${if (signature != null) "\"$signature\"" else "null"}}"""
+
+    /** Build a chunk JSON with a valid Ed25519 signature from [signer]. */
+    private fun signedChunkJson(
+        queryId: String = "qid-1",
+        chunkIndex: Int = 0,
+        totalChunks: Int = 1,
+        payloadB64: String = "aGVsbG8=",
+        sha256: String = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+    ): String {
+        val dto = ResponseBundleDto(
+            serverId = "wake-server-01",
+            queryId = queryId,
+            chunkIndex = chunkIndex,
+            totalChunks = totalChunks,
+            contentType = "text/html",
+            payloadB64 = payloadB64,
+            sha256 = sha256,
+        )
+        val sig = Base64.encodeToString(signer.sign(BundleVerifier.canonicalBytes(dto)), Base64.NO_WRAP)
+        return chunkJson(queryId, chunkIndex, totalChunks, payloadB64, sha256, signature = sig)
+    }
 
     private fun chunksJson(vararg chunks: String) = "[${chunks.joinToString(",")}]"
 
@@ -124,8 +157,8 @@ class ServerSyncManagerTest {
     @Test
     fun pollAndFetch_storesAllPendingBundles() = runTest {
         server.enqueue(MockResponse().setResponseCode(200).setBody(pendingJson("qid-a", "qid-b")))
-        server.enqueue(MockResponse().setResponseCode(200).setBody(chunksJson(chunkJson(queryId = "qid-a"))))
-        server.enqueue(MockResponse().setResponseCode(200).setBody(chunksJson(chunkJson(queryId = "qid-b"))))
+        server.enqueue(MockResponse().setResponseCode(200).setBody(chunksJson(signedChunkJson(queryId = "qid-a"))))
+        server.enqueue(MockResponse().setResponseCode(200).setBody(chunksJson(signedChunkJson(queryId = "qid-b"))))
         syncManager.pollAndFetch()
         val pendingPath = server.takeRequest().path!!
         assertTrue(
@@ -140,7 +173,7 @@ class ServerSyncManagerTest {
     fun pollAndFetch_skipsFailingQueryId_continuesRest() = runTest {
         server.enqueue(MockResponse().setResponseCode(200).setBody(pendingJson("qid-fail", "qid-ok")))
         server.enqueue(MockResponse().setResponseCode(404).setBody("Not Found"))
-        server.enqueue(MockResponse().setResponseCode(200).setBody(chunksJson(chunkJson(queryId = "qid-ok"))))
+        server.enqueue(MockResponse().setResponseCode(200).setBody(chunksJson(signedChunkJson(queryId = "qid-ok"))))
         // Must not throw despite the 404 on the first ID
         syncManager.pollAndFetch()
         val pendingPath = server.takeRequest().path!!
@@ -169,7 +202,7 @@ class ServerSyncManagerTest {
     @Test
     fun pollAndFetch_doesNotRefetchAlreadyFetchedQueryId() = runTest {
         server.enqueue(MockResponse().setResponseCode(200).setBody(pendingJson("qid-once")))
-        server.enqueue(MockResponse().setResponseCode(200).setBody(chunksJson(chunkJson(queryId = "qid-once"))))
+        server.enqueue(MockResponse().setResponseCode(200).setBody(chunksJson(signedChunkJson(queryId = "qid-once"))))
         syncManager.pollAndFetch()
 
         server.enqueue(MockResponse().setResponseCode(200).setBody(pendingJson("qid-once")))
@@ -189,7 +222,7 @@ class ServerSyncManagerTest {
         server.enqueue(MockResponse().setResponseCode(200).setBody(pendingJson("qid-emit")))
         server.enqueue(
             MockResponse().setResponseCode(200).setBody(
-                chunksJson(chunkJson(queryId = "qid-emit", sha256 = sha256OfHello))
+                chunksJson(signedChunkJson(queryId = "qid-emit", sha256 = sha256OfHello))
             )
         )
 
@@ -205,5 +238,100 @@ class ServerSyncManagerTest {
         assertEquals("qid-emit", bundle.queryId)
         assertEquals("text/html", bundle.contentType)
         assertArrayEquals("hello".toByteArray(), bundle.bytes)
+    }
+
+    // --- signature verification tests ---
+
+    @Test
+    fun pollAndFetch_doesNotStore_whenSignatureIsNull() = runTest {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(pendingJson("qid-nosig")))
+        server.enqueue(MockResponse().setResponseCode(200).setBody(chunksJson(chunkJson(queryId = "qid-nosig"))))
+        syncManager.pollAndFetch()
+        assertNull(db.bundleDao().getById("qid-nosig:0"))
+    }
+
+    @Test
+    fun pollAndFetch_doesNotStore_whenSignatureIsInvalid() = runTest {
+        // Valid base64 but not a valid signature over this bundle's contents.
+        val badSig = Base64.encodeToString(ByteArray(64) { 0x00 }, Base64.NO_WRAP)
+        server.enqueue(MockResponse().setResponseCode(200).setBody(pendingJson("qid-badsig")))
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                chunksJson(chunkJson(queryId = "qid-badsig", signature = badSig))
+            )
+        )
+        syncManager.pollAndFetch()
+        assertNull(db.bundleDao().getById("qid-badsig:0"))
+    }
+
+    @Test
+    fun pollAndFetch_doesNotStore_whenSignedWithWrongKey() = runTest {
+        val wrongSigner = Ed25519Sign(Ed25519Sign.KeyPair.newKeyPair().privateKey)
+        val dto = ResponseBundleDto(
+            serverId = "wake-server-01",
+            queryId = "qid-wrongkey",
+            chunkIndex = 0,
+            totalChunks = 1,
+            contentType = "text/html",
+            payloadB64 = "aGVsbG8=",
+            sha256 = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+        )
+        val wrongSig = Base64.encodeToString(
+            wrongSigner.sign(BundleVerifier.canonicalBytes(dto)),
+            Base64.NO_WRAP
+        )
+        server.enqueue(MockResponse().setResponseCode(200).setBody(pendingJson("qid-wrongkey")))
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                chunksJson(chunkJson(queryId = "qid-wrongkey", signature = wrongSig))
+            )
+        )
+        syncManager.pollAndFetch()
+        assertNull(db.bundleDao().getById("qid-wrongkey:0"))
+    }
+
+    @Test
+    fun pollAndFetch_retriesQueryId_afterSignatureRejection() = runTest {
+        // First poll: unsigned chunk → verification throws → queryId must NOT enter fetchedQueryIds.
+        server.enqueue(MockResponse().setResponseCode(200).setBody(pendingJson("qid-retry")))
+        server.enqueue(MockResponse().setResponseCode(200).setBody(chunksJson(chunkJson(queryId = "qid-retry"))))
+        syncManager.pollAndFetch()
+        assertNull("bad-sig chunk must not be stored", db.bundleDao().getById("qid-retry:0"))
+
+        // Second poll: same queryId reappears, now with a valid signature → must be accepted.
+        server.enqueue(MockResponse().setResponseCode(200).setBody(pendingJson("qid-retry")))
+        server.enqueue(MockResponse().setResponseCode(200).setBody(chunksJson(signedChunkJson(queryId = "qid-retry"))))
+        syncManager.pollAndFetch()
+        assertNotNull("valid-sig chunk must be stored on retry", db.bundleDao().getById("qid-retry:0"))
+    }
+
+    @Test
+    fun pollAndFetch_cachesPubkeyAcrossPolls() = runTest {
+        var providerCallCount = 0
+        val cachingManager = ServerSyncManager(
+            httpClient = WakeHttpClient(baseUrl = server.url("/").toString().trimEnd('/')),
+            storeManager = storeManager,
+            nodeId = "test-node-id",
+            reassembler = BundleReassembler(storeManager, testFilesDir),
+            pubkeyProvider = {
+                providerCallCount++
+                keyPair.publicKey
+            },
+        )
+
+        // First poll: 1 pending query, 1 signed chunk.
+        server.enqueue(MockResponse().setResponseCode(200).setBody(pendingJson("qid-poll1")))
+        server.enqueue(MockResponse().setResponseCode(200).setBody(chunksJson(signedChunkJson(queryId = "qid-poll1"))))
+        cachingManager.pollAndFetch()
+
+        // Second poll: different query, same signer.
+        server.enqueue(MockResponse().setResponseCode(200).setBody(pendingJson("qid-poll2")))
+        server.enqueue(MockResponse().setResponseCode(200).setBody(chunksJson(signedChunkJson(queryId = "qid-poll2"))))
+        cachingManager.pollAndFetch()
+
+        assertEquals("pubkeyProvider must be called exactly once", 1, providerCallCount)
+        // Both bundles must have been stored (verifier reused correctly).
+        assertNotNull(db.bundleDao().getById("qid-poll1:0"))
+        assertNotNull(db.bundleDao().getById("qid-poll2:0"))
     }
 }

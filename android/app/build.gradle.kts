@@ -73,5 +73,6 @@ dependencies {
     androidTestImplementation(libs.kotlinx.coroutines.test)
     implementation(libs.okhttp)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.tink.android)
     androidTestImplementation(libs.okhttp.mockwebserver)
 }
