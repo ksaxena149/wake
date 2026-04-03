@@ -126,7 +126,7 @@ class ServerSyncManagerTest {
 
     @Test
     fun submitRequest_sendsPostWithCorrectBody() = runTest {
-        server.enqueue(MockResponse().setResponseCode(200).setBody("{}"))
+        server.enqueue(MockResponse().setResponseCode(200).setBody("[]"))
         syncManager.submitRequest("qid-1", "water cycle")
         val req = server.takeRequest()
         assertEquals("POST", req.method)
@@ -138,18 +138,34 @@ class ServerSyncManagerTest {
     }
 
     @Test
-    fun submitRequest_doesNotStoreAnythingInDb() = runTest {
-        // POST /request is fire-and-forget; chunks arrive later via pollAndFetch.
-        server.enqueue(MockResponse().setResponseCode(200).setBody("{}"))
+    fun submitRequest_emptyResponse_nothingStoredInDb() = runTest {
+        // Empty chunk list from the server: nothing to store.
+        server.enqueue(MockResponse().setResponseCode(200).setBody("[]"))
         syncManager.submitRequest("qid-1", "water cycle")
         assertTrue(db.bundleDao().getByQueryId("qid-1").isEmpty())
     }
 
     @Test
-    fun submitRequest_noPayloadFileWritten() = runTest {
-        server.enqueue(MockResponse().setResponseCode(200).setBody("{}"))
-        syncManager.submitRequest("qid-1", "water cycle")
-        assertTrue("no bundle file should be written on submit", testFilesDir.listFiles().orEmpty().isEmpty())
+    fun submitRequest_storesImmediateChunksFromResponse() = runTest {
+        // The server returns signed chunks immediately — store them without waiting for pollAndFetch.
+        server.enqueue(MockResponse().setResponseCode(200).setBody(chunksJson(signedChunkJson(queryId = "qid-imm"))))
+        syncManager.submitRequest("qid-imm", "water cycle")
+        assertNotNull("immediate chunk must be stored in DB", db.bundleDao().getById("qid-imm:0"))
+        assertTrue("payload file must be written", testFilesDir.listFiles().orEmpty().isNotEmpty())
+    }
+
+    @Test
+    fun submitRequest_immediateChunks_skipsPollFetch() = runTest {
+        // After submitRequest stores the chunks, a subsequent pollAndFetch must not re-fetch.
+        server.enqueue(MockResponse().setResponseCode(200).setBody(chunksJson(signedChunkJson(queryId = "qid-nopoll"))))
+        syncManager.submitRequest("qid-nopoll", "water cycle")
+        server.takeRequest() // consume the POST /request call
+
+        server.enqueue(MockResponse().setResponseCode(200).setBody(pendingJson("qid-nopoll")))
+        syncManager.pollAndFetch()
+
+        // Only the GET /pending call should happen — no GET /bundle because queryId is already fetched.
+        assertEquals("only GET /pending should be made, not GET /bundle", 2, server.requestCount)
     }
 
     // --- pollAndFetch ---
@@ -291,18 +307,24 @@ class ServerSyncManagerTest {
     }
 
     @Test
-    fun pollAndFetch_retriesQueryId_afterSignatureRejection() = runTest {
-        // First poll: unsigned chunk → verification throws → queryId must NOT enter fetchedQueryIds.
-        server.enqueue(MockResponse().setResponseCode(200).setBody(pendingJson("qid-retry")))
-        server.enqueue(MockResponse().setResponseCode(200).setBody(chunksJson(chunkJson(queryId = "qid-retry"))))
+    fun pollAndFetch_permanentlySkips_afterSignatureRejection() = runTest {
+        // First poll: unsigned chunk → BundleVerificationException → queryId added to fetchedQueryIds.
+        server.enqueue(MockResponse().setResponseCode(200).setBody(pendingJson("qid-badsig-perm")))
+        server.enqueue(MockResponse().setResponseCode(200).setBody(chunksJson(chunkJson(queryId = "qid-badsig-perm"))))
         syncManager.pollAndFetch()
-        assertNull("bad-sig chunk must not be stored", db.bundleDao().getById("qid-retry:0"))
+        assertNull("bad-sig chunk must not be stored", db.bundleDao().getById("qid-badsig-perm:0"))
 
-        // Second poll: same queryId reappears, now with a valid signature → must be accepted.
-        server.enqueue(MockResponse().setResponseCode(200).setBody(pendingJson("qid-retry")))
-        server.enqueue(MockResponse().setResponseCode(200).setBody(chunksJson(signedChunkJson(queryId = "qid-retry"))))
+        // Second poll: same queryId reappears but must be silently skipped — no /bundle fetch.
+        server.enqueue(MockResponse().setResponseCode(200).setBody(pendingJson("qid-badsig-perm")))
         syncManager.pollAndFetch()
-        assertNotNull("valid-sig chunk must be stored on retry", db.bundleDao().getById("qid-retry:0"))
+
+        // Only 3 requests total: POST implicit /pending (x2) + GET /bundle (x1 on first poll only).
+        assertEquals(
+            "second poll must skip /bundle fetch for the permanently-failed queryId",
+            3,
+            server.requestCount,
+        )
+        assertNull("chunk must remain absent from DB", db.bundleDao().getById("qid-badsig-perm:0"))
     }
 
     @Test

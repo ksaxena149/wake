@@ -29,6 +29,7 @@ import com.wake.dtn.ui.SearchScreen
 import com.wake.dtn.ui.StatusScreen
 import com.wake.dtn.ui.WakeScreen
 import com.wake.dtn.ui.theme.WakeTheme
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 
@@ -36,22 +37,31 @@ class MainActivity : ComponentActivity() {
 
     private val viewModel: MainViewModel by viewModels()
 
+    // Collectors started in onServiceConnected. Cancelled before re-launching on reconnect so
+    // each onStop→onStart cycle doesn't accumulate unbounded coroutines.
+    private var serviceCollectorJobs: List<Job> = emptyList()
+
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
             val service = (binder as WakeService.LocalBinder).getService()
             viewModel.setNodeId(service.syncManager.nodeId)
-            lifecycleScope.launch {
-                service.latestBundle.filterNotNull().collect { viewModel.onBundleArrived(it) }
-            }
-            lifecycleScope.launch {
-                service.lastSyncTimeMs.filterNotNull().collect { viewModel.onSyncTimeUpdated(it) }
-            }
-            lifecycleScope.launch {
-                service.totalStorageBytesFlow.collect { viewModel.onStorageUpdated(it) }
-            }
+            serviceCollectorJobs.forEach { it.cancel() }
+            serviceCollectorJobs = listOf(
+                lifecycleScope.launch {
+                    service.latestBundle.filterNotNull().collect { viewModel.onBundleArrived(it) }
+                },
+                lifecycleScope.launch {
+                    service.lastSyncTimeMs.filterNotNull().collect { viewModel.onSyncTimeUpdated(it) }
+                },
+                lifecycleScope.launch {
+                    service.totalStorageBytesFlow.collect { viewModel.onStorageUpdated(it) }
+                },
+            )
         }
 
         override fun onServiceDisconnected(name: ComponentName) {
+            serviceCollectorJobs.forEach { it.cancel() }
+            serviceCollectorJobs = emptyList()
             viewModel.setNodeId(null)
         }
     }

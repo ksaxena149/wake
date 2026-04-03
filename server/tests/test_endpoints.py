@@ -297,6 +297,32 @@ async def test_get_bundle_returns_stored_chunks() -> None:
 
 
 @pytest.mark.asyncio
+async def test_mark_request_done_is_atomic_with_chunks() -> None:
+    """mark_request_done failure must roll back all chunks — no orphaned outbound rows."""
+    from unittest.mock import patch as mock_patch
+
+    async def failing_mark_done(db, query_id):
+        raise aiosqlite.IntegrityError("simulated mark_request_done failure")
+
+    body = _make_request_body("atomic done test", "atomic-done-qid-001")
+    transport = httpx.ASGITransport(app=app)
+
+    with mock_patch("main.mark_request_done", failing_mark_done):
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post("/request", json=body)
+
+    assert resp.status_code == 500
+
+    # Transaction rolled back: no chunks and no pending entry should exist.
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+        bundle_resp = await ac.get("/bundle/atomic-done-qid-001")
+        pending = await ac.get("/pending", params={"node_id": body["node_id"]})
+
+    assert bundle_resp.status_code == 404
+    assert "atomic-done-qid-001" not in pending.json()["pending_query_ids"]
+
+
+@pytest.mark.asyncio
 async def test_chunk_insertion_is_atomic() -> None:
     """A DB error on chunk N must roll back chunks 0..N-1 so no partial set is committed.
 

@@ -120,6 +120,7 @@ async def submit_request(
                 for c in signed_chunks
             ],
         )
+        await mark_request_done(db, bundle.query_id)
         await db.commit()
     except httpx.HTTPStatusError as exc:
         await db.rollback()
@@ -134,8 +135,6 @@ async def submit_request(
         await db.rollback()
         logger.exception("Failed to store outbound chunks for query_id=%s", bundle.query_id)
         raise HTTPException(status_code=500, detail="Failed to store response chunks")
-
-    await mark_request_done(db, bundle.query_id)
 
     return [c.model_dump() for c in signed_chunks]
 

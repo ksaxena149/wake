@@ -5,12 +5,13 @@ import android.content.Context
 import android.content.Intent
 import android.os.Binder
 import android.os.IBinder
+import android.util.Log
+import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.wake.dtn.data.BundleReassembler
 import com.wake.dtn.data.BundleStoreManager
 import com.wake.dtn.data.ReassembledBundle
 import com.wake.dtn.data.WakeDatabase
-import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -51,6 +52,10 @@ class WakeService : Service() {
     /** Total payload bytes currently held in the bundle store. Updated after each TTL eviction pass. */
     val totalStorageBytesFlow: StateFlow<Long> = _totalStorageBytesFlow.asStateFlow()
 
+    // Guards against double-start if onStartCommand is called multiple times, and signals
+    // the polling loops to exit when ACTION_STOP arrives.
+    @Volatile private var isStarted = false
+
     private val binder = LocalBinder()
 
     inner class LocalBinder : Binder() {
@@ -60,7 +65,6 @@ class WakeService : Service() {
     override fun onCreate() {
         super.onCreate()
         NotificationHelper.createChannel(this)
-        startForeground(NOTIFICATION_ID, NotificationHelper.buildNotification(this))
 
         bundleStoreManager = BundleStoreManager(
             context = this,
@@ -81,9 +85,31 @@ class WakeService : Service() {
                 _latestBundle.value = bundle
             }
         }
+    }
 
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        when (intent?.action) {
+            ACTION_STOP -> {
+                if (isStarted) {
+                    isStarted = false
+                    ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                }
+            }
+            else -> {
+                if (!isStarted) {
+                    isStarted = true
+                    startForeground(NOTIFICATION_ID, NotificationHelper.buildNotification(this))
+                    launchPollingLoops()
+                }
+            }
+        }
+        return START_STICKY
+    }
+
+    private fun launchPollingLoops() {
         scope.launch {
-            while (isActive) {
+            while (isActive && isStarted) {
                 try {
                     bundleStoreManager.runTtlEviction()
                     _totalStorageBytesFlow.value = bundleStoreManager.getTotalPayloadBytes()
@@ -95,7 +121,7 @@ class WakeService : Service() {
         }
 
         scope.launch {
-            while (isActive) {
+            while (isActive && isStarted) {
                 try {
                     syncManager.pollAndFetch()
                     _lastSyncTimeMs.value = System.currentTimeMillis()
@@ -105,11 +131,6 @@ class WakeService : Service() {
                 delay(SYNC_INTERVAL_MS)
             }
         }
-    }
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // START_STICKY: Android will restart this service with a null Intent after being killed
-        return START_STICKY
     }
 
     override fun onBind(intent: Intent): IBinder = binder
@@ -128,6 +149,8 @@ class WakeService : Service() {
         /** Change to your laptop's LAN IP for on-device testing; issue #37 makes this configurable. */
         const val SERVER_BASE_URL = "http://192.168.1.11:8000"
 
+        private const val ACTION_STOP = "com.wake.dtn.action.STOP"
+
         fun start(context: Context) {
             ContextCompat.startForegroundService(
                 context,
@@ -135,8 +158,13 @@ class WakeService : Service() {
             )
         }
 
+        /**
+         * Stop the relay. Sends ACTION_STOP via [onStartCommand] so the loops exit immediately
+         * and the foreground notification is removed — even while MainActivity is still bound.
+         * The service is fully destroyed once the last client unbinds.
+         */
         fun stop(context: Context) {
-            context.stopService(Intent(context, WakeService::class.java))
+            context.startService(Intent(context, WakeService::class.java).setAction(ACTION_STOP))
         }
     }
 }

@@ -61,13 +61,18 @@ class WakeHttpClient(
     private val baseHttpUrl = baseUrl.trimEnd('/').toHttpUrl()
     private val json = Json { ignoreUnknownKeys = true }
 
-    /** POST a request bundle to the server. Throws [IOException] on non-2xx. */
+    /**
+     * POST a request bundle to the server and return the signed response chunks the server
+     * sends back immediately. The server always processes the request synchronously and returns
+     * all chunks in the response body, so callers can store them right away without waiting for
+     * a later [fetchBundle] poll. Throws [IOException] on non-2xx.
+     */
     suspend fun submitRequest(
         nodeId: String,
         queryId: String,
         queryString: String,
         ttlSeconds: Int = DEFAULT_TTL_SECONDS,
-    ) {
+    ): List<ResponseBundleDto> {
         val dto = RequestBundleDto(
             nodeId = nodeId,
             queryId = queryId,
@@ -81,7 +86,7 @@ class WakeHttpClient(
             .url(baseHttpUrl.newBuilder().addPathSegment("request").build())
             .post(json.encodeToString(dto).toRequestBody(JSON_MEDIA_TYPE))
             .build()
-        executeAndGetBody(request)
+        return json.decodeFromString(executeAndGetBody(request))
     }
 
     /** GET /pending?node_id={nodeId} and return the list of query IDs the server has ready for this node. */
