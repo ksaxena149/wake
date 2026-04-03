@@ -51,7 +51,7 @@ fun interface SearchRequestSender {
 class MainViewModel(
     private val relay: RelayController = WakeServiceController(),
     private val searchSender: SearchRequestSender = SearchRequestSender { nodeId, queryId, query ->
-        WakeHttpClient(WakeService.SERVER_BASE_URL).submitRequest(nodeId, queryId, query)
+        sharedHttpClient.submitRequest(nodeId, queryId, query)
     },
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
@@ -211,6 +211,9 @@ class MainViewModel(
 
     companion object {
         private const val TAG = "MainViewModel"
+
+        // One shared client with a single thread pool — reused across all searches.
+        private val sharedHttpClient = WakeHttpClient(WakeService.SERVER_BASE_URL)
 
         /** Extract article links of the form /A/... from kiwix search result HTML. */
         internal fun parseSearchResults(html: String): List<SearchResult> {

@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.util.Collections
 
 /**
  * Orchestrates WAKE server sync: submits request bundles, polls for pending results,
@@ -26,7 +27,9 @@ class ServerSyncManager(
     private val reassembler: BundleReassembler,
     private val pubkeyProvider: suspend () -> ByteArray = { httpClient.fetchPubkey() },
 ) {
-    private val fetchedQueryIds = mutableSetOf<String>()
+    // BUG-4 fix: mutableSetOf returns a LinkedHashSet; concurrent access from
+    // viewModelScope (submitRequest) and WakeService.scope (pollAndFetch) would race.
+    private val fetchedQueryIds: MutableSet<String> = Collections.synchronizedSet(mutableSetOf())
 
     private val verifierMutex = Mutex()
     private var verifier: BundleVerifier? = null
@@ -41,17 +44,36 @@ class ServerSyncManager(
     val reassembledBundles: SharedFlow<ReassembledBundle> = _reassembledBundles.asSharedFlow()
 
     /**
-     * POST a request bundle to the server. Fire-and-forget: the server queues the request
-     * and response chunks are collected later via [pollAndFetch]. Throws [java.io.IOException]
-     * on non-2xx responses.
+     * POST a request bundle to the server.
+     *
+     * The server processes the request synchronously and returns all signed response chunks
+     * immediately in the HTTP response body. Those chunks are stored right away so the UI can
+     * render without waiting for the next [pollAndFetch] cycle (which could be up to 30 s away).
+     *
+     * Throws [java.io.IOException] on non-2xx responses.
      */
     suspend fun submitRequest(queryId: String, queryString: String) {
         fetchedQueryIds.remove(queryId)
-        httpClient.submitRequest(
+        val chunks = httpClient.submitRequest(
             nodeId = nodeId,
             queryId = queryId,
             queryString = queryString,
         )
+        if (chunks.isNotEmpty()) {
+            verifierMutex.withLock {
+                if (verifier == null) verifier = BundleVerifier(pubkeyProvider())
+            }
+            runCatching { storeChunks(chunks) }
+                .onSuccess { fetchedQueryIds.add(queryId) }
+                .onFailure { e ->
+                    if (e is BundleVerificationException) {
+                        Log.e(TAG, "Permanent signature failure on immediate response; skipping queryId=$queryId", e)
+                        fetchedQueryIds.add(queryId)
+                    } else {
+                        Log.w(TAG, "Failed to store immediate chunks for queryId=$queryId", e)
+                    }
+                }
+        }
     }
 
     /**
@@ -72,7 +94,14 @@ class ServerSyncManager(
                 storeChunks(httpClient.fetchBundle(queryId))
                 fetchedQueryIds.add(queryId)
             }.onFailure { e ->
-                Log.w(TAG, "Failed to fetch bundle for queryId=$queryId", e)
+                if (e is BundleVerificationException) {
+                    // Signature failure is permanent — a corrupt or tampered bundle will not
+                    // become valid on retry. Skip it forever and log at ERROR.
+                    Log.e(TAG, "Permanent signature failure; skipping queryId=$queryId forever", e)
+                    fetchedQueryIds.add(queryId)
+                } else {
+                    Log.w(TAG, "Transient failure fetching bundle for queryId=$queryId; will retry", e)
+                }
             }
         }
     }
@@ -83,7 +112,9 @@ class ServerSyncManager(
         val nowMs = System.currentTimeMillis()
         for (chunk in chunks) {
             if (!v.verify(chunk)) {
-                error("Bundle signature verification failed: queryId=${chunk.queryId} chunk=${chunk.chunkIndex}")
+                throw BundleVerificationException(
+                    "Signature verification failed: queryId=${chunk.queryId} chunk=${chunk.chunkIndex}"
+                )
             }
             val payloadBytes = Base64.decode(chunk.payloadB64, Base64.DEFAULT)
             storeManager.store(chunk.toEntity(nowMs), payloadBytes)
@@ -101,6 +132,9 @@ class ServerSyncManager(
         private const val TAG = "ServerSyncManager"
     }
 }
+
+/** Thrown when a bundle's Ed25519 signature fails verification. Permanent — never retried. */
+internal class BundleVerificationException(message: String) : Exception(message)
 
 private fun ResponseBundleDto.toEntity(receivedAtMs: Long) = BundleEntity(
     bundleId = "$queryId:$chunkIndex",

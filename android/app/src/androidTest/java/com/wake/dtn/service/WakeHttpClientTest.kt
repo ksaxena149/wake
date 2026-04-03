@@ -49,8 +49,8 @@ class WakeHttpClientTest {
 
     @Test
     fun submitRequest_succeedsOn2xx() = runTest {
-        // POST /request is fire-and-forget; server returns an ack, not chunks.
-        server.enqueue(MockResponse().setResponseCode(200).setBody("{}"))
+        // Server returns chunks as a JSON array (may be empty when none are ready yet).
+        server.enqueue(MockResponse().setResponseCode(200).setBody("[]"))
         client.submitRequest("node-1", "qid-1", "water cycle")
         // No exception thrown — request was sent and server responded with 2xx.
         assertEquals(1, server.requestCount)
@@ -58,7 +58,7 @@ class WakeHttpClientTest {
 
     @Test
     fun submitRequest_requestBodyHasCorrectSnakeCaseFields() = runTest {
-        server.enqueue(MockResponse().setResponseCode(200).setBody("{}"))
+        server.enqueue(MockResponse().setResponseCode(200).setBody("[]"))
         client.submitRequest("node-1", "qid-snake", "water cycle")
         val body = server.takeRequest().body.readUtf8()
         assertTrue("node_id missing", body.contains("\"node_id\""))
@@ -71,7 +71,7 @@ class WakeHttpClientTest {
     @Test
     fun submitRequest_timestampIsUnixSeconds() = runTest {
         val before = System.currentTimeMillis() / 1_000L
-        server.enqueue(MockResponse().setResponseCode(200).setBody("{}"))
+        server.enqueue(MockResponse().setResponseCode(200).setBody("[]"))
         client.submitRequest("node-1", "qid-ts", "test")
         val after = System.currentTimeMillis() / 1_000L
         val body = server.takeRequest().body.readUtf8()
