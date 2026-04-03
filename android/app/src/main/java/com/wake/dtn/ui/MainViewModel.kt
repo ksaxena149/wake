@@ -20,7 +20,16 @@ import java.util.UUID
 
 // ---- Screen navigation ----
 
-enum class WakeScreen { SEARCH, STATUS }
+enum class WakeScreen { SEARCH, STATUS, RESULT }
+
+// ---- Article UI state ----
+
+sealed class ArticleUiState {
+    object Idle : ArticleUiState()
+    object Loading : ArticleUiState()
+    data class Loaded(val html: String) : ArticleUiState()
+    data class Error(val message: String) : ArticleUiState()
+}
 
 // ---- Search UI state ----
 
@@ -65,11 +74,17 @@ class MainViewModel(
     private val _lastSyncTimeMs = MutableStateFlow<Long?>(null)
     val lastSyncTimeMs: StateFlow<Long?> = _lastSyncTimeMs.asStateFlow()
 
+    private val _articleState = MutableStateFlow<ArticleUiState>(ArticleUiState.Idle)
+    val articleState: StateFlow<ArticleUiState> = _articleState.asStateFlow()
+
     /** The node ID provided by the bound WakeService. Null when service is not connected. */
     private var nodeId: String? = null
 
-    /** The query ID of the most recently submitted search, awaiting a response bundle. */
+    /** The query ID of the most recently submitted search or article fetch, awaiting a response bundle. */
     private var pendingQueryId: String? = null
+
+    private enum class PendingQueryType { SEARCH, ARTICLE }
+    private var pendingQueryType: PendingQueryType = PendingQueryType.SEARCH
 
     fun startRelay(context: Context) {
         relay.start(context)
@@ -105,6 +120,7 @@ class MainViewModel(
 
         val queryId = UUID.randomUUID().toString()
         pendingQueryId = queryId
+        pendingQueryType = PendingQueryType.SEARCH
         _searchState.value = SearchUiState.Loading
 
         viewModelScope.launch(ioDispatcher) {
@@ -115,6 +131,37 @@ class MainViewModel(
                 pendingQueryId = null
             }
         }
+    }
+
+    /**
+     * Fetch an article from the WAKE server by its kiwix path (e.g. "/A/Water").
+     * Navigates to [WakeScreen.RESULT] immediately and shows a loading indicator until
+     * the reassembled bundle arrives.
+     * No-op if the service is not yet connected (nodeId == null).
+     */
+    fun fetchArticle(path: String) {
+        val id = nodeId ?: return
+        val queryId = UUID.randomUUID().toString()
+        pendingQueryId = queryId
+        pendingQueryType = PendingQueryType.ARTICLE
+        _articleState.value = ArticleUiState.Loading
+        _currentScreen.value = WakeScreen.RESULT
+
+        viewModelScope.launch(ioDispatcher) {
+            try {
+                searchSender.send(id, queryId, path)
+            } catch (e: Exception) {
+                _articleState.value = ArticleUiState.Error(e.message ?: "Network error")
+                pendingQueryId = null
+            }
+        }
+    }
+
+    /** Navigate back to the Search screen and reset article state. */
+    fun navigateBack() {
+        _currentScreen.value = WakeScreen.SEARCH
+        _articleState.value = ArticleUiState.Idle
+        pendingQueryId = null
     }
 
     /**
@@ -131,20 +178,24 @@ class MainViewModel(
         }
 
         val html = bundle.bytes.decodeToString()
-        val results = parseSearchResults(html)
         Log.i(
             TAG,
-            "Search bundle received queryId=${bundle.queryId} contentType=${bundle.contentType} bytes=${bundle.bytes.size} parsedResults=${results.size}",
+            "Bundle received queryId=${bundle.queryId} type=$pendingQueryType contentType=${bundle.contentType} bytes=${bundle.bytes.size}",
         )
-        if (results.isEmpty()) {
-            val preview = html.replace("\n", " ").replace("\r", " ").take(180)
-            Log.w(
-                TAG,
-                "Parsed zero results for queryId=${bundle.queryId}. HTML preview=$preview",
-            )
-        }
 
-        _searchState.value = SearchUiState.Results(results)
+        when (pendingQueryType) {
+            PendingQueryType.SEARCH -> {
+                val results = parseSearchResults(html)
+                if (results.isEmpty()) {
+                    val preview = html.replace("\n", " ").replace("\r", " ").take(180)
+                    Log.w(TAG, "Parsed zero results for queryId=${bundle.queryId}. HTML preview=$preview")
+                }
+                _searchState.value = SearchUiState.Results(results)
+            }
+            PendingQueryType.ARTICLE -> {
+                _articleState.value = ArticleUiState.Loaded(html)
+            }
+        }
         pendingQueryId = null
     }
 

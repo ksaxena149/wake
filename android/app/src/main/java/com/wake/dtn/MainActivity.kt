@@ -24,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.lifecycleScope
 import com.wake.dtn.service.WakeService
 import com.wake.dtn.ui.MainViewModel
+import com.wake.dtn.ui.ResultScreen
 import com.wake.dtn.ui.SearchScreen
 import com.wake.dtn.ui.StatusScreen
 import com.wake.dtn.ui.WakeScreen
@@ -63,25 +64,28 @@ class MainActivity : ComponentActivity() {
                 val currentScreen by viewModel.currentScreen.collectAsState()
                 Scaffold(
                     bottomBar = {
-                        NavigationBar {
-                            NavigationBarItem(
-                                selected = currentScreen == WakeScreen.SEARCH,
-                                onClick = { viewModel.navigateTo(WakeScreen.SEARCH) },
-                                icon = { Icon(Icons.Default.Search, contentDescription = "Search") },
-                                label = { Text("Search") },
-                            )
-                            NavigationBarItem(
-                                selected = currentScreen == WakeScreen.STATUS,
-                                onClick = { viewModel.navigateTo(WakeScreen.STATUS) },
-                                icon = { Icon(Icons.Default.Info, contentDescription = "Status") },
-                                label = { Text("Status") },
-                            )
+                        if (currentScreen != WakeScreen.RESULT) {
+                            NavigationBar {
+                                NavigationBarItem(
+                                    selected = currentScreen == WakeScreen.SEARCH,
+                                    onClick = { viewModel.navigateTo(WakeScreen.SEARCH) },
+                                    icon = { Icon(Icons.Default.Search, contentDescription = "Search") },
+                                    label = { Text("Search") },
+                                )
+                                NavigationBarItem(
+                                    selected = currentScreen == WakeScreen.STATUS,
+                                    onClick = { viewModel.navigateTo(WakeScreen.STATUS) },
+                                    icon = { Icon(Icons.Default.Info, contentDescription = "Status") },
+                                    label = { Text("Status") },
+                                )
+                            }
                         }
                     },
                 ) { innerPadding ->
                     when (currentScreen) {
                         WakeScreen.SEARCH -> SearchScreen(viewModel, Modifier.padding(innerPadding))
                         WakeScreen.STATUS -> StatusScreen(viewModel, Modifier.padding(innerPadding))
+                        WakeScreen.RESULT -> ResultScreen(viewModel, Modifier.padding(innerPadding))
                     }
                 }
             }
