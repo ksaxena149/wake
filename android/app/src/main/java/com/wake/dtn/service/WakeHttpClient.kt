@@ -41,6 +41,11 @@ private data class PendingResponseDto(
     @SerialName("pending_query_ids") val pendingQueryIds: List<String>,
 )
 
+@Serializable
+private data class PubkeyResponseDto(
+    @SerialName("pubkey_b64") val pubkeyB64: String,
+)
+
 /**
  * Thin OkHttp wrapper for the three WAKE server endpoints.
  *
@@ -91,6 +96,19 @@ class WakeHttpClient(
             .get()
             .build()
         return json.decodeFromString<PendingResponseDto>(executeAndGetBody(request)).pendingQueryIds
+    }
+
+    /** GET /pubkey and return the server's 32-byte Ed25519 verify key as raw bytes. */
+    suspend fun fetchPubkey(): ByteArray {
+        val request = Request.Builder()
+            .url(baseHttpUrl.newBuilder().addPathSegment("pubkey").build())
+            .get()
+            .build()
+        val body = executeAndGetBody(request)
+        val dto = json.decodeFromString<PubkeyResponseDto>(body)
+        return android.util.Base64.decode(dto.pubkeyB64, android.util.Base64.DEFAULT).also {
+            require(it.size == 32) { "Unexpected Ed25519 key length: ${it.size}" }
+        }
     }
 
     /** GET /bundle/{queryId} and return all stored response chunks for that query. */

@@ -11,6 +11,8 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Orchestrates WAKE server sync: submits request bundles, polls for pending results,
@@ -22,8 +24,12 @@ class ServerSyncManager(
     private val storeManager: BundleStoreManager,
     val nodeId: String,
     private val reassembler: BundleReassembler,
+    private val pubkeyProvider: suspend () -> ByteArray = { httpClient.fetchPubkey() },
 ) {
     private val fetchedQueryIds = mutableSetOf<String>()
+
+    private val verifierMutex = Mutex()
+    private var verifier: BundleVerifier? = null
 
     private val _reassembledBundles = MutableSharedFlow<ReassembledBundle>(
         replay = 0,
@@ -53,6 +59,9 @@ class ServerSyncManager(
      * A failure for one query ID is logged and skipped; the rest of the loop continues.
      */
     suspend fun pollAndFetch() {
+        verifierMutex.withLock {
+            if (verifier == null) verifier = BundleVerifier(pubkeyProvider())
+        }
         val pending = httpClient.fetchPending(nodeId)
         if (pending.isEmpty()) return
 
@@ -70,8 +79,12 @@ class ServerSyncManager(
 
     private suspend fun storeChunks(chunks: List<ResponseBundleDto>) {
         if (chunks.isEmpty()) return
+        val v = verifier ?: error("BundleVerifier not initialized")
         val nowMs = System.currentTimeMillis()
         for (chunk in chunks) {
+            if (!v.verify(chunk)) {
+                error("Bundle signature verification failed: queryId=${chunk.queryId} chunk=${chunk.chunkIndex}")
+            }
             val payloadBytes = Base64.decode(chunk.payloadB64, Base64.DEFAULT)
             storeManager.store(chunk.toEntity(nowMs), payloadBytes)
         }
