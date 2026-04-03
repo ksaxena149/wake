@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    WAKE only ever communicates with a server on the local LAN (laptop, Pi hotspot, or
+    emulator loopback). It never contacts a public internet host, so permitting cleartext
+    globally is safe and is required because Android 9+ blocks HTTP by default.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

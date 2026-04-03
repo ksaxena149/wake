@@ -39,10 +39,49 @@ CREATE TABLE IF NOT EXISTS outbound_bundles (
 );
 
 CREATE TABLE IF NOT EXISTS seen_bundle_ids (
-    query_id TEXT    PRIMARY KEY,
+    bundle_id TEXT    PRIMARY KEY,
     seen_at  INTEGER NOT NULL
 );
 """
+
+
+def bundle_id_for_request(query_id: str) -> str:
+    """Dedup key for a request bundle (matches Android REQUEST bundleId)."""
+    return query_id
+
+
+def bundle_id_for_response_chunk(query_id: str, chunk_index: int) -> str:
+    """Dedup key for one response chunk (matches Android RESPONSE bundleId)."""
+    return f"{query_id}:{chunk_index}"
+
+
+async def _migrate_seen_bundle_ids_schema(db: aiosqlite.Connection) -> None:
+    """Rename query_id → bundle_id on existing DBs (pre–issue #13 used query_id as PK)."""
+    async with db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='seen_bundle_ids'"
+    ) as cursor:
+        if await cursor.fetchone() is None:
+            return
+    async with db.execute("PRAGMA table_info(seen_bundle_ids)") as cursor:
+        columns = {row[1] for row in await cursor.fetchall()}
+    if "bundle_id" in columns:
+        return
+    if "query_id" not in columns:
+        return
+    await db.executescript(
+        """
+        BEGIN;
+        CREATE TABLE seen_bundle_ids_new (
+            bundle_id TEXT    PRIMARY KEY,
+            seen_at   INTEGER NOT NULL
+        );
+        INSERT INTO seen_bundle_ids_new (bundle_id, seen_at)
+            SELECT query_id, seen_at FROM seen_bundle_ids;
+        DROP TABLE seen_bundle_ids;
+        ALTER TABLE seen_bundle_ids_new RENAME TO seen_bundle_ids;
+        COMMIT;
+        """
+    )
 
 
 async def init_db(path: Path) -> None:
@@ -51,6 +90,7 @@ async def init_db(path: Path) -> None:
     _db_path = path
     async with aiosqlite.connect(path) as db:
         await db.executescript(_DDL)
+        await _migrate_seen_bundle_ids_schema(db)
         await db.commit()
     logger.info("Database initialised at %s", path)
 
@@ -74,6 +114,7 @@ async def insert_inbound_request(
     bundle: RequestBundle,
     received_at: int,
 ) -> None:
+    """Caller must commit (or roll back) the surrounding transaction."""
     await db.execute(
         """
         INSERT OR IGNORE INTO inbound_requests
@@ -92,12 +133,23 @@ async def insert_inbound_request(
             received_at,
         ),
     )
-    await db.commit()
 
 
 async def list_pending_query_ids(db: aiosqlite.Connection) -> list[str]:
     async with db.execute(
         "SELECT query_id FROM inbound_requests WHERE status = 'pending'"
+    ) as cursor:
+        rows = await cursor.fetchall()
+    return [row["query_id"] for row in rows]
+
+
+async def list_done_query_ids_for_node(
+    db: aiosqlite.Connection, node_id: str
+) -> list[str]:
+    """Return query IDs whose response chunks are ready for pickup by this node."""
+    async with db.execute(
+        "SELECT query_id FROM inbound_requests WHERE status = 'done' AND node_id = ?",
+        (node_id,),
     ) as cursor:
         rows = await cursor.fetchall()
     return [row["query_id"] for row in rows]
@@ -116,19 +168,29 @@ async def mark_request_done(db: aiosqlite.Connection, query_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def is_seen(db: aiosqlite.Connection, query_id: str) -> bool:
+async def is_seen(db: aiosqlite.Connection, bundle_id: str) -> bool:
     async with db.execute(
-        "SELECT 1 FROM seen_bundle_ids WHERE query_id = ?", (query_id,)
+        "SELECT 1 FROM seen_bundle_ids WHERE bundle_id = ?", (bundle_id,)
     ) as cursor:
         return await cursor.fetchone() is not None
 
 
-async def mark_seen(db: aiosqlite.Connection, query_id: str, seen_at: int) -> None:
+async def mark_seen(db: aiosqlite.Connection, bundle_id: str, seen_at: int) -> None:
+    """Caller must commit (or roll back) the surrounding transaction."""
     await db.execute(
-        "INSERT OR IGNORE INTO seen_bundle_ids (query_id, seen_at) VALUES (?, ?)",
-        (query_id, seen_at),
+        "INSERT OR IGNORE INTO seen_bundle_ids (bundle_id, seen_at) VALUES (?, ?)",
+        (bundle_id, seen_at),
     )
-    await db.commit()
+
+
+async def insert_seen_ignore_many(
+    db: aiosqlite.Connection, entries: list[tuple[str, int]]
+) -> None:
+    """Append seen_bundle_ids rows without committing (caller owns transaction)."""
+    await db.executemany(
+        "INSERT OR IGNORE INTO seen_bundle_ids (bundle_id, seen_at) VALUES (?, ?)",
+        entries,
+    )
 
 
 # ---------------------------------------------------------------------------

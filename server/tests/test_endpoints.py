@@ -221,14 +221,28 @@ async def test_post_request_kiwix_unreachable_returns_502() -> None:
 async def test_get_pending_empty() -> None:
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
-        resp = await ac.get("/pending")
+        resp = await ac.get("/pending", params={"node_id": "550e8400-e29b-41d4-a716-446655440000"})
     assert resp.status_code == 200
     assert resp.json() == {"pending_query_ids": []}
 
 
 @pytest.mark.asyncio
+async def test_get_pending_returns_done_query() -> None:
+    """After a successful POST /request the query_id shows up in GET /pending for that node."""
+    node_id = "550e8400-e29b-41d4-a716-446655440000"
+    body = _make_request_body("water cycle", "pending-done-qid-001")
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+        post = await ac.post("/request", json=body)
+        assert post.status_code == 200
+        resp = await ac.get("/pending", params={"node_id": node_id})
+    assert resp.status_code == 200
+    assert "pending-done-qid-001" in resp.json()["pending_query_ids"]
+
+
+@pytest.mark.asyncio
 async def test_get_pending_after_failed_request() -> None:
-    """A request that fails at the kiwix stage stays pending."""
+    """Kiwix failure rolls back inbound + seen_bundle_ids — no phantom pending row."""
 
     def error_handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(500)
@@ -240,10 +254,11 @@ async def test_get_pending_after_failed_request() -> None:
 
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
-        await ac.post("/request", json=_make_request_body("fail", "pending-qid-001"))
-        resp = await ac.get("/pending")
+        post = await ac.post("/request", json=_make_request_body("fail", "pending-qid-001"))
+        assert post.status_code == 502
+        resp = await ac.get("/pending", params={"node_id": "550e8400-e29b-41d4-a716-446655440000"})
 
-    assert "pending-qid-001" in resp.json()["pending_query_ids"]
+    assert "pending-qid-001" not in resp.json()["pending_query_ids"]
 
     await mock_client.aclose()
 
@@ -279,6 +294,32 @@ async def test_get_bundle_returns_stored_chunks() -> None:
 # ---------------------------------------------------------------------------
 # POST /request — chunk atomicity
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mark_request_done_is_atomic_with_chunks() -> None:
+    """mark_request_done failure must roll back all chunks — no orphaned outbound rows."""
+    from unittest.mock import patch as mock_patch
+
+    async def failing_mark_done(db, query_id):
+        raise aiosqlite.IntegrityError("simulated mark_request_done failure")
+
+    body = _make_request_body("atomic done test", "atomic-done-qid-001")
+    transport = httpx.ASGITransport(app=app)
+
+    with mock_patch("main.mark_request_done", failing_mark_done):
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post("/request", json=body)
+
+    assert resp.status_code == 500
+
+    # Transaction rolled back: no chunks and no pending entry should exist.
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+        bundle_resp = await ac.get("/bundle/atomic-done-qid-001")
+        pending = await ac.get("/pending", params={"node_id": body["node_id"]})
+
+    assert bundle_resp.status_code == 404
+    assert "atomic-done-qid-001" not in pending.json()["pending_query_ids"]
 
 
 @pytest.mark.asyncio
@@ -318,9 +359,11 @@ async def test_chunk_insertion_is_atomic() -> None:
 
     assert resp.status_code == 500
 
-    # No partial chunks must be visible
+    # Roll back must include outbound chunks, inbound request, and seen ids — not only chunks.
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
         bundle_resp = await ac.get("/bundle/atomic-qid-001")
+        pending = await ac.get("/pending", params={"node_id": "550e8400-e29b-41d4-a716-446655440000"})
     assert bundle_resp.status_code == 404
+    assert "atomic-qid-001" not in pending.json()["pending_query_ids"]
 
     await mock_client.aclose()

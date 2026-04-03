@@ -10,14 +10,18 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 
 from chunker import chunk_payload
 from database import (
+    bundle_id_for_request,
+    bundle_id_for_response_chunk,
     get_db,
     get_outbound_bundles,
     init_db,
     insert_inbound_request,
     insert_outbound_bundle,
+    list_done_query_ids_for_node,
     list_pending_query_ids,
     mark_request_done,
     mark_seen,
+    insert_seen_ignore_many,
 )
 from kiwix_proxy import fetch_from_kiwix
 from models import RequestBundle, ResponseBundle
@@ -83,44 +87,62 @@ async def submit_request(
 
     now = int(time.time())
     await insert_inbound_request(db, bundle, received_at=now)
-    await mark_seen(db, bundle.query_id, seen_at=now)
+    await mark_seen(db, bundle_id_for_request(bundle.query_id), seen_at=now)
 
-    try:
-        payload_bytes, content_type = await fetch_from_kiwix(
-            request.app.state.kiwix_client, bundle.query_string
-        )
-    except httpx.HTTPStatusError as exc:
-        logger.error("kiwix-serve returned %s for query %s", exc.response.status_code, bundle.query_id)
-        raise HTTPException(status_code=502, detail=f"kiwix-serve error: {exc.response.status_code}")
-    except httpx.RequestError as exc:
-        logger.error("Cannot reach kiwix-serve: %s", exc)
-        raise HTTPException(status_code=502, detail="kiwix-serve unreachable")
-
-    chunks = chunk_payload(payload_bytes, content_type, bundle.query_id, SERVER_ID)
-
-    key = get_signing_key()
     signed_chunks: list[ResponseBundle] = []
     try:
+        try:
+            payload_bytes, content_type = await fetch_from_kiwix(
+                request.app.state.kiwix_client, bundle.query_string
+            )
+        except httpx.HTTPStatusError as exc:
+            logger.error(
+                "kiwix-serve returned %s for query %s",
+                exc.response.status_code,
+                bundle.query_id,
+            )
+            raise
+        except httpx.RequestError as exc:
+            logger.error("Cannot reach kiwix-serve: %s", exc)
+            raise
+
+        chunks = chunk_payload(payload_bytes, content_type, bundle.query_id, SERVER_ID)
+        key = get_signing_key()
         for chunk in chunks:
             sig = sign_bundle(key, chunk)
             signed = chunk.model_copy(update={"signature": sig})
             await insert_outbound_bundle(db, signed, created_at=now)
             signed_chunks.append(signed)
+        await insert_seen_ignore_many(
+            db,
+            [
+                (bundle_id_for_response_chunk(c.query_id, c.chunk_index), now)
+                for c in signed_chunks
+            ],
+        )
+        await mark_request_done(db, bundle.query_id)
         await db.commit()
+    except httpx.HTTPStatusError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=502,
+            detail=f"kiwix-serve error: {exc.response.status_code}",
+        ) from exc
+    except httpx.RequestError:
+        await db.rollback()
+        raise HTTPException(status_code=502, detail="kiwix-serve unreachable")
     except Exception:
         await db.rollback()
         logger.exception("Failed to store outbound chunks for query_id=%s", bundle.query_id)
         raise HTTPException(status_code=500, detail="Failed to store response chunks")
 
-    await mark_request_done(db, bundle.query_id)
-
     return [c.model_dump() for c in signed_chunks]
 
 
 @app.get("/pending")
-async def list_pending(db=Depends(get_db)):
-    """Return query IDs of requests that have not yet been fulfilled."""
-    return {"pending_query_ids": await list_pending_query_ids(db)}
+async def list_pending(node_id: str, db=Depends(get_db)):
+    """Return query IDs whose response chunks are ready for pickup by this node."""
+    return {"pending_query_ids": await list_done_query_ids_for_node(db, node_id)}
 
 
 @app.get("/bundle/{query_id}")

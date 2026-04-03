@@ -1,3 +1,7 @@
 <resources>
     <string name="app_name">Wake</string>
+    <string name="notification_channel_name">WAKE Relay</string>
+    <string name="notification_channel_desc">Keeps the WAKE relay running in the background</string>
+    <string name="notification_title">WAKE relay active</string>
+    <string name="notification_text">Listening for bundle exchanges</string>
 </resources>
